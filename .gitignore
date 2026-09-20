@@ -1,0 +1,14 @@
+node_modules/
+dist/
+
+# Workspace-local session data, never part of the repository.
+.workbuddy/
+coverage/
+*.tsbuildinfo
+
+# Run artifacts: event logs, traces and snapshots produced by real runs.
+# They are evidence, not source. Golden transcripts are committed explicitly.
+runs/
+.env
+.env.*
+!.env.example

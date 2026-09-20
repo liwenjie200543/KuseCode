@@ -1,0 +1,22 @@
+{
+  "name": "ts-agent-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A TypeScript Agent Core and Runtime derived from first principles. The Pi Agent SDK is an adapter behind ports, never the architecture.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
