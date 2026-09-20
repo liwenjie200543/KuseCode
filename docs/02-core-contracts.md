@@ -71,7 +71,8 @@ SDK 的数据形状会顺着状态渗进 Core。
 
 | 推迟的 | 推迟到 | 理由 |
 |---|---|---|
-| `SessionStore` / `RunLog` 接口 | step 7 | 它们是「Run 怎么活下来」的契约，在真正实现持久化时一并定，避免凭想象设计。 |
+| `SessionStore` 接口 | step 7 | 它是「Run 怎么活下来」的契约，在真正实现持久化时一并定，避免凭想象设计。 |
+| `RunLog` 接口 | **step 4（已落地）** | 原计划与 `SessionStore` 一起推迟到 step 7，前提是「还没有驱动方」。step 4 有了驱动方，「事件落在哪里」就成了必须当场回答的问题，所以契约提前到 `src/runtime/run-log.ts`；持久化实现仍在 step 7（见 `docs/04-run-events.md`）。 |
 | 流式 `text_delta` / `thinking_delta` 事件 | 未定 | token 增量不是审计证据，决策与观测才是。把它们落进事件日志会撑大日志、稀释 trace。CLI 真的需要流式体验时再加，且**不落库**。 |
 | `Context` 的渲染函数 | step 3 | 类型先定，实现跟着循环一起落地。 |
 

@@ -61,11 +61,14 @@ Each step is one commit and proves one first-principles claim.
 
 ## Status
 
-Step 3 done. The Core loop runs to completion with a fake model and fake tools — no process,
-no database, no network, no UI. Nothing else exists yet: the Runtime, the Pi adapter and the
-CLI are still ahead.
+Step 4 done. One task is one ordered, replayable event stream: the Runtime consumes the Core loop
+and translates it into `AgentEvent`s — identity (`runId` / `toolCallId`), a monotone `sequence`,
+and a terminal event that closes every path that actually ends. Events land in a `RunLog` before
+anyone sees them, so the stream is provably a prefix of the log. The log itself is still in
+memory: budgets, cancellation enforcement, durable storage and the Pi adapter are still ahead.
 
-Per-step reasoning lives in `docs/02-core-contracts.md` and `docs/03-core-loop.md`.
+Per-step reasoning lives in `docs/02-core-contracts.md`, `docs/03-core-loop.md` and
+`docs/04-run-events.md`.
 
 ## Commands
 

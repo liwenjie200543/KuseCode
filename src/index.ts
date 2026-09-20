@@ -1,11 +1,12 @@
 // Public entry point. Filled in by the steps that follow:
 //   step 2 -> Agent Core domain types   (done, type-only)
 //   step 3 -> the minimal loop          (done: the package's first runtime code)
-//   step 4 -> Agent Runtime
+//   step 4 -> Agent Runtime             (done: one Task becomes an event stream)
 //
 // 词汇是 `export type`：类型在编译后被完全擦除。
-// 步 3 之后这里开始导出真实运行时代码——只有 Core 的循环，没有任何 SDK、
-// 进程、网络或存储。所谓「Core 是纯的」，指的就是这一点。
+// 步 3 之后这里开始导出真实运行时代码——先是 Core 的循环，再是驱动它的 Runtime。
+// 仍然没有任何 SDK、进程、网络或存储：Runtime 的事件落在注入的 `RunLog` 上，
+// 内存实现由调用方自己建（`memoryRunLog()`）。
 
 export type {
   // material and provenance
@@ -60,3 +61,12 @@ export type {
   LoopTurn,
   TerminalDecision,
 } from "./core/loop.js";
+
+// Runtime：把上面的循环翻译成一条有序事件流。
+// 身份（runId / toolCallId）、事件日志的契约、终态事件的构造都在这一侧。
+export { createRuntime, emptyStateFor, toRunError } from "./runtime/run-agent.js";
+export type { CollectMissingMaterial, RunAgentOptions } from "./runtime/run-agent.js";
+export { assertAppendOnly, memoryRunLog } from "./runtime/run-log.js";
+export type { RunLog } from "./runtime/run-log.js";
+export { cryptoIds, sequentialIds } from "./runtime/ids.js";
+export type { IdFactory } from "./runtime/ids.js";
