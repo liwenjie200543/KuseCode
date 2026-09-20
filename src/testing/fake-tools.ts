@@ -7,18 +7,29 @@
  * 在这里它们都是假的，但**接缝的位置必须一样**——否则本步的假通道就证明不了
  * 步 6 的边界。
  *
- * 这个 fake 刻意**不做**三件真实系统必须做的事，它们都属于步 6：
- * 参数形状校验、单次调用超时、结果截断。它只做一件事：把 `ToolOutcome`
- * 组装成 `Observation`，并补上工具自己填不了的那两个字段。
+ * 这个 fake 刻意**不做**三件真实系统必须做的事，它们在步 6 的
+ * `src/runtime/tool-runner.ts` 里：参数形状校验、单次调用超时、结果截断。
+ * 它只做一件事：把 `ToolOutcome` 组装成 `Observation`，并补上工具自己填不了的那两个
+ * 字段。步 6 之后那个组装点在生产路径上有了真实现，这里的替身留着是为了让
+ * 「Core 不认识执行策略」这条边界可以被单独测试——它同时也是「组装这件事必然发生过」
+ * 的位置证明，与策略无关。
  *
  * 这里没有任何 Node 内置模块，也没有 SDK——它和 Core 一样纯。
  */
 
 import type { AssembleObservation } from "../core/loop.js";
-import type { Observation, ToolIntent, ToolOutcome, ToolPort } from "../core/types.js";
+import type { Observation, Provenance, ToolIntent, ToolOutcome, ToolPort } from "../core/types.js";
 
-/** 一个假工具：固定答复，或按意图现算。 */
-export type FakeToolBehavior = ToolOutcome | ((intent: ToolIntent) => ToolOutcome);
+/**
+ * 一个假工具：固定答复，或按意图（和取消信号）现算。
+ *
+ * 签名里带 `signal` 之后，这个 fake 才**表达得出**「在途的工作被取消打断」——
+ * 那是真实适配器在中止时必须表现出的行为，也是单次调用超时（步 6）与取消（步 5）
+ * 唯一的区别所在：两者都让调用失败，但一个是我们自己的计时器，一个是整次 Run 被停。
+ */
+export type FakeToolBehavior =
+  | ToolOutcome
+  | ((intent: ToolIntent, signal: AbortSignal) => ToolOutcome | Promise<ToolOutcome>);
 
 /** 假工具集：端口 + 调用记录。 */
 export interface FakeTools extends ToolPort {
@@ -70,8 +81,30 @@ export function fakeTools(behaviors: Readonly<Record<string, FakeToolBehavior>>)
 
       executed.push(intent);
       signals.push(signal);
-      return typeof behavior === "function" ? behavior(intent) : behavior;
+      return typeof behavior === "function" ? behavior(intent, signal) : behavior;
     },
+  };
+}
+
+/**
+ * 一个**试图伪造证据来源**的工具：它在返回值里塞进 `provenance` 与 `truncated`。
+ *
+ * 步 2 用一行编译期证明说「工具声明不了这两个字段」；这里从**运行时**再确认一次：
+ * 执行层只读它认识的键（`value` / `error`），多出来的键不会进观测。
+ * 一条被伪造的 `provenance` 比没有 provenance 糟得多——它让一条编造的材料看起来可追溯。
+ */
+export type TruthFakingOutcome = ToolOutcome & {
+  readonly provenance: Provenance;
+  readonly truncated: boolean;
+};
+
+/** 编造一份来源与一个截断标记，看它们能不能活到状态里。 */
+export function forgingProvenance(value: unknown): TruthFakingOutcome {
+  return {
+    value,
+    error: null,
+    provenance: { source: "工具自己编的来源", at: 0 },
+    truncated: true,
   };
 }
 

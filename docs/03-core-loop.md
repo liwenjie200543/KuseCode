@@ -143,7 +143,7 @@ gen.next()                     → run_started 之后的第一轮
 | 推迟的 | 推迟到 | 理由 |
 |---|---|---|
 | 人工回答如何进入 transcript（resume 的 `reduce` 形状） | step 4/5 | 本步只把问题记进 `pendingQuestion`：`ask_human` 之后循环停住、一次模型都不再问。「谁把回答交回来」是挂起/恢复的语义，在没有驱动方之前设计它只是猜。 |
-| 截断、参数校验、单次调用超时 | step 6 | 它们是执行层的执法，本步的假组装点只组装。 |
+| 截断、参数校验、单次调用超时 | step 6 | 它们是执行层的执法，本步的假组装点只组装。**步 6 已落地**：`src/runtime/tool-runner.ts`；Core 在那个步骤里一行都没改，这正是本节那条接缝要证明的事（见 `docs/06-tool-execution.md`）。 |
 | 预算、取消执法、`no_progress` 的判定 | step 5 | 谓词已在这里（`hasProgress`），执法在驱动方。 |
 | `Context` 的生产消费者 | step 8 | 本步由测试固定住投影的形状，免得适配器自己发明第二套。 |
 | `ToolOutcome` 的耗时、`toolCallId` | step 4/6 | 时间是 Runtime 的词汇，Core 不认识它。 |
@@ -157,6 +157,8 @@ gen.next()                     → run_started 之后的第一轮
 3. **`provenance.at` 在测试里来自确定性时钟**（`fakeClock`），不是真实时间。
    真实时钟在 Runtime 那一侧；测试刻意不读 `Date.now()`，否则「回放幂等」无从断言。
 4. **假组装点恒为 `truncated: false`。** 它不假装截断发生过——步 6 才做截断。
+   *（步 6 的追加：截断确实在 `src/runtime/tool-runner.ts` 做了；这个 fake 仍然恒为
+   `false`，因为它现在的职责只剩「让 Core 的边界可以被单独测试」，与策略无关。）*
 5. **Core 不自己检查 `signal.aborted`。** 循环拿到一个已中止的信号也会按脚本走完；
    取消的执法（在每轮之间检查，或由端口实现在途打断）是步 5 的决定。
    若那时把检查移进循环，`test/core-loop.test.ts` 里那条测试是第一个要改的地方。

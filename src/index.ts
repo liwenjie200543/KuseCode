@@ -3,11 +3,13 @@
 //   step 3 -> the minimal loop          (done: the package's first runtime code)
 //   step 4 -> Agent Runtime             (done: one Task becomes an event stream)
 //   step 5 -> budget & cancellation     (done: runs stop predictably)
+//   step 6 -> tool execution layer      (done: untrusted output, isolated failures)
 //
 // 词汇是 `export type`：类型在编译后被完全擦除。
-// 步 3 之后这里开始导出真实运行时代码——先是 Core 的循环，再是驱动它的 Runtime，
-// 然后是让这次 Run 停得下来的那一层。仍然没有任何 SDK、进程、网络或存储：
-// Runtime 的事件落在注入的 `RunLog` 上，内存实现由调用方自己建（`memoryRunLog()`）。
+// 步 3 之后这里开始导出真实运行时代码——先是 Core 的循环，再是驱动它的 Runtime、
+// 让 Run 停得下来的那一层，最后是把不可信的工具调用变成可信观测的执行层。
+// 仍然没有任何 SDK、进程、网络或存储：Runtime 的事件落在注入的 `RunLog` 上，
+// 内存实现由调用方自己建（`memoryRunLog()`）。
 
 export type {
   // material and provenance
@@ -90,3 +92,20 @@ export type {
   TerminationCause,
   TimeoutSignalFactory,
 } from "./runtime/termination.js";
+
+// 工具执行层：一次调用要过的八道关，以及 `ToolOutcome → Observation` 唯一发生的地方。
+// `createToolRunner` 交出的 `toolDeps()` 是接线用的形状——三个字段一起摊进
+// `createRuntime`，少一个都编译不过。
+export {
+  CALL_TIMEOUT_MS,
+  OBSERVATION_CHAR_LIMIT,
+  TOOL_ERROR_CODES,
+  collectMissingMaterial,
+  createToolRunner,
+} from "./runtime/tool-runner.js";
+export type {
+  ToolErrorCode,
+  ToolLayerDeps,
+  ToolRunner,
+  ToolRunnerOptions,
+} from "./runtime/tool-runner.js";

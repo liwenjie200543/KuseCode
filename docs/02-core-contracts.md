@@ -50,6 +50,11 @@ const outcomeLeaksPolicyFields: [Extract<"provenance" | "truncated", keyof ToolO
 
 谁把策略字段加回 `ToolOutcome`，这一行就编译不过。
 
+*（步 6 的追加：这条证明兑现的地方是 `src/runtime/tool-runner.ts`——`provenance` 与
+`truncated` 确实只由那一层写。破坏性验证顺带发现拦住「工具伪造这两个字段」的是**两道**
+独立的防线（`normalizeOutcome` 的重建、组装点的构造），拆掉任意一道另一道仍然成立。
+见 `docs/06-tool-execution.md` 边界决定 7。）*
+
 ### 3. 状态里只存 `transcript`，不额外存 `observations`
 
 多存一份投影，就多一个会在回放时分叉的真相。而「回放必须重建出完全相同的

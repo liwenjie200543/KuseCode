@@ -61,18 +61,17 @@ Each step is one commit and proves one first-principles claim.
 
 ## Status
 
-Step 5 done. A run now stops predictably. The Runtime owns the budget (iterations, tool calls,
-wall clock) and checks it **before** each action rather than after, and it hands the ports one
-composed signal — the caller's cancellation plus `AbortSignal.timeout` — so an abort interrupts
-in-flight work and no further call is started. The stopping reason is attributed from that signal,
-never from the shape of a thrown error: `run_cancelled` for a cancellation,
-`run_failed{budget_timeout}` for our own wall clock. Every run now ends at a **named** place in
-the log, including the one path the previous step left unnamed (a consumer that walks away
-mid-stream). The log is still in memory, and token budgets are deliberately not enforced yet;
-durable storage and the Pi adapter are still ahead.
+Step 6 done. Tool calls now go through an execution layer, and everything it touches is treated as
+untrusted: the name is checked against the port's allowlist, the arguments and the result must both
+be representable in the JSON event log, a single call carries its own timeout, and an oversized
+result is truncated **visibly**. A failing tool — rejected args, a throw, a timeout, an
+unrepresentable result — becomes an observation with an error, never a `run_failed`: the run keeps
+going and finishes `partial` with the missing material named. `provenance` and `truncated` are
+written only by this layer, which is what step 2's type split was for. The Core was not touched
+at all. Durable storage and the Pi adapter are still ahead.
 
 Per-step reasoning lives in `docs/02-core-contracts.md`, `docs/03-core-loop.md`,
-`docs/04-run-events.md` and `docs/05-budget-cancellation.md`.
+`docs/04-run-events.md`, `docs/05-budget-cancellation.md` and `docs/06-tool-execution.md`.
 
 ## Commands
 

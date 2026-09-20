@@ -188,7 +188,7 @@ npm test
 | `usage_reported` | step 8/9 | 载荷里的 token 数在步 8 之前不存在。Runtime 知道的 `toolCalls` / `durationMs` 会随 trace（步 9）呈现。 |
 | 事件的持久化（一行一事件的 JSONL） | step 7 | 契约与内存实现在 `src/runtime/run-log.ts`，载体在 `src/store/`。契约属于 Runtime，载体属于存储。 |
 | `sessionId` | step 7 | 事件基础字段里没有它，`Session` 也没有存放的地方——会话隔离要有 `SessionStore` 才有意义。 |
-| `missingMaterial` 的填充 | step 6 | 见边界决定 5。 |
+| `missingMaterial` 的填充 | step 6 | 见边界决定 5。**步 6 已落地**：`collectMissingMaterial(state)` 读三种缺失（观测带 error / 观测截断 / 有 `call_tool` 意图而无观测），与执行层的错误码住在同一个文件里——写侧与读侧必须是同一套判断（`docs/06-tool-execution.md` 边界决定 8）。 |
 
 ## 六、局限（如实记录）
 
