@@ -4,12 +4,14 @@
 //   step 4 -> Agent Runtime             (done: one Task becomes an event stream)
 //   step 5 -> budget & cancellation     (done: runs stop predictably)
 //   step 6 -> tool execution layer      (done: untrusted output, isolated failures)
+//   step 7 -> durability & replay       (done: the log is the truth, replay is idempotent)
 //
 // 词汇是 `export type`：类型在编译后被完全擦除。
 // 步 3 之后这里开始导出真实运行时代码——先是 Core 的循环，再是驱动它的 Runtime、
-// 让 Run 停得下来的那一层，最后是把不可信的工具调用变成可信观测的执行层。
-// 仍然没有任何 SDK、进程、网络或存储：Runtime 的事件落在注入的 `RunLog` 上，
-// 内存实现由调用方自己建（`memoryRunLog()`）。
+// 让 Run 停得下来的那一层、把不可信的工具调用变成可信观测的执行层，
+// 最后是从事件重建状态的回放、以及让事件活下来的存储。
+// 仍然没有 SDK；Core / Runtime / 执行层 / 回放全都零 `node:` 引用（测试守着这条），
+// 只有 `src/store` 碰磁盘，而它碰的是调用方注入的路径。
 
 export type {
   // material and provenance
@@ -109,3 +111,20 @@ export type {
   ToolRunner,
   ToolRunnerOptions,
 } from "./runtime/tool-runner.js";
+
+// 回放：把一串事件折叠回状态。它没有一行 I/O——**从事件重建状态是语义，
+// 事件的载体是存储**。所以它在 runtime 里，而磁盘在下面。
+export { isRunOver, isTerminalEvent, replayAgentState, runStatusOf } from "./runtime/replay.js";
+
+// 存储：事件的载体与会话索引。这是 `src/` 下面唯一允许碰 `node:` 的地方。
+// `jsonlRunLog` 是 `RunLog` 的生产实现；`createSessionStore` 把「哪些 Run 属于哪个
+// 会话、各自的 Task 是什么」记在磁盘上，其余一切都从日志派生。
+export { eventsPathFor, jsonlRunLog } from "./store/run-log-jsonl.js";
+export type { JsonlRunLogOptions } from "./store/run-log-jsonl.js";
+export { createSessionStore } from "./store/session-store.js";
+export type {
+  RecoveredRun,
+  SessionStore,
+  SessionStoreOptions,
+  StartedRun,
+} from "./store/session-store.js";

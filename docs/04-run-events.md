@@ -56,7 +56,7 @@ respond（一趟收工）
 | `human_input_requested` | 发射 | 走完 `ask_human` 之后 |
 | `run_completed` | 发射 | `complete` / `partial` |
 | `run_failed` | 发射 | 见边界决定 4 |
-| `human_input_received` / `run_resumed` | 不发射 | 挂起的 Run 怎么被叫醒，是步 5/7 的语义 |
+| `human_input_received` / `run_resumed` | 不发射 | 挂起的 Run 怎么被叫醒的语义仍未落地（步 7 落地的是持久化与回放，而回放会拒绝这两条事件——见第五节推迟表）。 |
 | `run_cancelled` | 不发射 | 取消的执法在步 5 |
 | `usage_reported` | 不发射 | 它的载荷一半来自适配器（token 数）。步 8 之前发射等于伪造数据 |
 
@@ -145,6 +145,11 @@ provider 特有的错误怎么变成这十个码，是**适配器**的事（映�
 说「每条路径都以终态事件收尾」是不准确的，准确的说法是：
 **respnd / 失败两条路径各以恰好一个终态事件收尾；问到人的那条没有终态事件，
 因为那次 Run 还活着。** 步 5/7 会用 `run_resumed` / `human_input_received` 把它接下去。
+*（步 7 的追加：**没有接下去。** 步 5 落的是取消执法，步 7 落的是持久化与回放——
+而回放会拒绝这两条事件，因为「把人的回答写进 `transcript`」的那一步状态推进仍然不存在。
+一次挂起的 Run 现在能持久化、能被回放重建到挂起那一刻（`status: awaiting_human`），
+但没有办法把它叫醒。见 `docs/07-durability-replay.md` 边界决定 6。上面这段不修改——
+它是这一步当时的事实。）*
 
 ## 四、验证
 
@@ -184,10 +189,10 @@ npm test
 | 推迟的 | 推迟到 | 理由 |
 |---|---|---|
 | 预算与取消的执法（`run_cancelled`、「中止后不再发起任何调用」） | step 5 | 本步只证明同一条 `signal` 被原样转交给模型与工具两端（有测试）；检查 `aborted` 的时机是下一脚的决定。**步 5 已落地**：交出去的信号变成「外部取消 + 墙钟」组合出来的那条，理由与证据在 `docs/05-budget-cancellation.md`。 |
-| `human_input_received` / `run_resumed` | step 5/7 | 挂起怎么被叫醒要有「谁交回答案、怎么重新进入循环」的语义，本步没有恢复入口。 |
+| `human_input_received` / `run_resumed` | 仍未发射 | 挂起怎么被叫醒要有「谁交回答案、怎么重新进入循环」的语义，本步没有恢复入口。**步 5/7 都没能落地它**：持久化与回放到了（步 7），但回放会**明确拒绝**这两条事件，因为把人的回答写进 `transcript`（`role: "human"`）的那一步状态推进还不存在——`reduce` 只接受决策（`docs/07-durability-replay.md` 边界决定 6）。 |
 | `usage_reported` | step 8/9 | 载荷里的 token 数在步 8 之前不存在。Runtime 知道的 `toolCalls` / `durationMs` 会随 trace（步 9）呈现。 |
-| 事件的持久化（一行一事件的 JSONL） | step 7 | 契约与内存实现在 `src/runtime/run-log.ts`，载体在 `src/store/`。契约属于 Runtime，载体属于存储。 |
-| `sessionId` | step 7 | 事件基础字段里没有它，`Session` 也没有存放的地方——会话隔离要有 `SessionStore` 才有意义。 |
+| 事件的持久化（一行一事件的 JSONL） | **step 7（已落地）** | 契约与内存实现在 `src/runtime/run-log.ts`，载体在 `src/store/run-log-jsonl.ts`。契约属于 Runtime，载体属于存储——而且**契约一行都没改**（`docs/07-durability-replay.md`）。 |
+| `sessionId` | **step 7（已落地）** | 事件基础字段里**仍然没有它**，这是刻意的（见下面第 3 条的追加）：它落在会话索引 `sessions/<sessionId>.json` 里，因为「这个 Run 属于哪个会话」是存储的问题，不是事件的问题。 |
 | `missingMaterial` 的填充 | step 6 | 见边界决定 5。**步 6 已落地**：`collectMissingMaterial(state)` 读三种缺失（观测带 error / 观测截断 / 有 `call_tool` 意图而无观测），与执行层的错误码住在同一个文件里——写侧与读侧必须是同一套判断（`docs/06-tool-execution.md` 边界决定 8）。 |
 
 ## 六、局限（如实记录）
@@ -197,8 +202,15 @@ npm test
 2. **`run_started` 不带 `task`。** 步 2 定的词汇如此，所以单看事件流还看不出这次 Run
    在做什么——那个问题的答案在 `Task` 的持久化（步 7）与 trace（步 9），
    本步不擅自往事件里塞字段。
+   *（步 7 的追加：答案落在会话索引里——`sessions/<sessionId>.json` 存着每个 Run 的
+   `Task`。需要它的地方正是回放：`replayAgentState(events, task)` 的第一个动作就是
+   用这个 `Task` 构造初始状态。存储因此只存「日志答不出来的东西」。）*
 3. **日志只在内存里。** 进程结束就没，事件流的「可回放」在本步是「可整体断言」，
    真正的回放（用事件重建 state 并与实时状态深对比）在步 7。
+   *（步 7 的追加：这条已经过去了。日志落在 `runs/<runId>/events.jsonl`，回放由
+   `replayAgentState(events, task)` 做，而它折叠事件用的是**步 3 的同一个 `reduce`**——
+   于是「回放重建出完全相同的状态」在结构上成立，而不是靠测试碰运气。
+   上面这段不修改——它是这一步当时的事实。见 `docs/07-durability-replay.md`。）*
 4. **消费者半路 break 是一个没有名称的结局。** 日志停在半路、没有终态事件；
    本步能保证的是「日志不被消费者破坏、它看到的是前缀」。把它变成显式的
    `run_cancelled`（或者别的什么）是步 5 的事。

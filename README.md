@@ -61,17 +61,23 @@ Each step is one commit and proves one first-principles claim.
 
 ## Status
 
-Step 6 done. Tool calls now go through an execution layer, and everything it touches is treated as
-untrusted: the name is checked against the port's allowlist, the arguments and the result must both
-be representable in the JSON event log, a single call carries its own timeout, and an oversized
-result is truncated **visibly**. A failing tool — rejected args, a throw, a timeout, an
-unrepresentable result — becomes an observation with an error, never a `run_failed`: the run keeps
-going and finishes `partial` with the missing material named. `provenance` and `truncated` are
-written only by this layer, which is what step 2's type split was for. The Core was not touched
-at all. Durable storage and the Pi adapter are still ahead.
+Step 7 done. The event log is durable now, and it is still the only source of truth. A run writes
+one JSON line per event under `runs/<runId>/events.jsonl`; a session index records which runs
+belong to which session and nothing else — `status` / `startedAt` / `updatedAt` are **derived from
+the log** rather than stored beside it, because a second copy of "how far did it get" is a second
+truth that drifts without telling anyone. A record ends at its newline: a half-written tail (a
+crash mid-append) is dropped on read and repaired before the next append, while a
+newline-terminated line that will not parse is corruption and is reported loudly. Serialization
+round-trips before it is written, so the log can never contain a line that reads back as something
+else. `replayAgentState(events, task)` rebuilds the exact state a live run passed through, because
+it folds the events through step 3's own `reduce` — one implementation, three consumers (live
+execution, replay, unit tests). Every prefix of a log is a valid recovery point. The two events it
+cannot rebuild yet (a human answer has no state transition) are refused, not skipped. The Pi
+adapter and the CLI are still ahead.
 
 Per-step reasoning lives in `docs/02-core-contracts.md`, `docs/03-core-loop.md`,
-`docs/04-run-events.md`, `docs/05-budget-cancellation.md` and `docs/06-tool-execution.md`.
+`docs/04-run-events.md`, `docs/05-budget-cancellation.md`, `docs/06-tool-execution.md` and
+`docs/07-durability-replay.md`.
 
 ## Commands
 
