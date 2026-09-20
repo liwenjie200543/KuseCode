@@ -183,7 +183,7 @@ npm test
 
 | 推迟的 | 推迟到 | 理由 |
 |---|---|---|
-| 预算与取消的执法（`run_cancelled`、「中止后不再发起任何调用」） | step 5 | 本步只证明同一条 `signal` 被原样转交给模型与工具两端（有测试）；检查 `aborted` 的时机是下一脚的决定。 |
+| 预算与取消的执法（`run_cancelled`、「中止后不再发起任何调用」） | step 5 | 本步只证明同一条 `signal` 被原样转交给模型与工具两端（有测试）；检查 `aborted` 的时机是下一脚的决定。**步 5 已落地**：交出去的信号变成「外部取消 + 墙钟」组合出来的那条，理由与证据在 `docs/05-budget-cancellation.md`。 |
 | `human_input_received` / `run_resumed` | step 5/7 | 挂起怎么被叫醒要有「谁交回答案、怎么重新进入循环」的语义，本步没有恢复入口。 |
 | `usage_reported` | step 8/9 | 载荷里的 token 数在步 8 之前不存在。Runtime 知道的 `toolCalls` / `durationMs` 会随 trace（步 9）呈现。 |
 | 事件的持久化（一行一事件的 JSONL） | step 7 | 契约与内存实现在 `src/runtime/run-log.ts`，载体在 `src/store/`。契约属于 Runtime，载体属于存储。 |
@@ -202,6 +202,8 @@ npm test
 4. **消费者半路 break 是一个没有名称的结局。** 日志停在半路、没有终态事件；
    本步能保证的是「日志不被消费者破坏、它看到的是前缀」。把它变成显式的
    `run_cancelled`（或者别的什么）是步 5 的事。
+   *（步 5 的追加：它确实叫 `run_cancelled`，见 `docs/05-budget-cancellation.md` 第一节。
+   上面这段不修改——它是这一步当时的事实。）*
 5. **`durationMs` 是 `clock()` 的两次调用之差**，测试里来自计数器时钟（恒定步长），
    所以它证不了「真实耗时的精度」——只证明了它确实来自注入的时钟、且大于零。
 6. **`toRunError` 不认识 provider 的词汇。** 一个带 `code: "rate_limited"` 的错误

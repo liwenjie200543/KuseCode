@@ -61,14 +61,18 @@ Each step is one commit and proves one first-principles claim.
 
 ## Status
 
-Step 4 done. One task is one ordered, replayable event stream: the Runtime consumes the Core loop
-and translates it into `AgentEvent`s — identity (`runId` / `toolCallId`), a monotone `sequence`,
-and a terminal event that closes every path that actually ends. Events land in a `RunLog` before
-anyone sees them, so the stream is provably a prefix of the log. The log itself is still in
-memory: budgets, cancellation enforcement, durable storage and the Pi adapter are still ahead.
+Step 5 done. A run now stops predictably. The Runtime owns the budget (iterations, tool calls,
+wall clock) and checks it **before** each action rather than after, and it hands the ports one
+composed signal — the caller's cancellation plus `AbortSignal.timeout` — so an abort interrupts
+in-flight work and no further call is started. The stopping reason is attributed from that signal,
+never from the shape of a thrown error: `run_cancelled` for a cancellation,
+`run_failed{budget_timeout}` for our own wall clock. Every run now ends at a **named** place in
+the log, including the one path the previous step left unnamed (a consumer that walks away
+mid-stream). The log is still in memory, and token budgets are deliberately not enforced yet;
+durable storage and the Pi adapter are still ahead.
 
-Per-step reasoning lives in `docs/02-core-contracts.md`, `docs/03-core-loop.md` and
-`docs/04-run-events.md`.
+Per-step reasoning lives in `docs/02-core-contracts.md`, `docs/03-core-loop.md`,
+`docs/04-run-events.md` and `docs/05-budget-cancellation.md`.
 
 ## Commands
 

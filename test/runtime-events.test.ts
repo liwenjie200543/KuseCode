@@ -484,7 +484,7 @@ describe("事件日志", () => {
     // 前缀性质：消费者看到的永远是日志的前缀——一条不多、一条不少、顺序一致。
     expect(all.slice(0, seen.length)).toEqual(seen);
     // write-ahead：`observation_added` 已经落日志了，只是还没送到消费者手里。
-    expect(typesOf(all)).toEqual([
+    expect(typesOf(all).slice(0, 6)).toEqual([
       "run_started",
       "model_requested",
       "decision_made",
@@ -492,10 +492,9 @@ describe("事件日志", () => {
       "tool_completed",
       "observation_added",
     ]);
-    expect(all.length).toBe(seen.length + 1);
-    // 提前 break 不是「结束」，也不是「取消」：日志里没有终态事件。
-    // 谁中止、发什么事件，是步 5 的执法。
-    expect(all.filter((event) => TERMINAL_TYPES.includes(event.type))).toHaveLength(0);
+    // 日志的结尾不在这里断言。步 5 给了这个结局一个名字：离场之后工作当场停止，
+    // 日志补一条 `run_cancelled`——证据在 test/runtime-budget.test.ts 的
+    // 「消费者离场」一节，那里同时钉住了「挂起不算被遗弃」。这里只管前缀。
   });
 
   it("拒绝有洞或重复的写入（日志的定义是追加，不是调用方的自觉）", async () => {
@@ -586,18 +585,24 @@ describe("身份是一个可替换的实现", () => {
   });
 });
 
-describe("取消信号：本步只证明它被原样转交", () => {
-  it("同一条 signal 到达模型与工具两端", async () => {
+describe("信号：同一条被交到两端", () => {
+  it("模型与工具两端收到的是同一条信号", async () => {
     const controller = new AbortController();
     const h = harness([callTool(readFile), respond("好了")]);
     await h.run(controller.signal);
     const model = h.model as ReturnType<typeof scriptedModel>;
 
-    expect(model.signals).toEqual([controller.signal, controller.signal]);
-    expect(h.tools.signals).toEqual([controller.signal]);
+    // 步 5 之后交出去的信号是**组合**出来的那条（外部取消 + 墙钟），不再是调用方那条
+    // 本身——所以这里断言的不再是「它 === controller.signal」。但「两端拿到同一条」
+    // 这条性质没有变，它才是取消能贯通到端口的前提；而「中止能真的打断在途调用」
+    // 由 test/runtime-budget.test.ts 断言。
+    const [first, second] = model.signals;
+    expect(first).toBe(second);
+    expect(must(h.tools.signals[0], "工具收到的信号")).toBe(first);
+    expect(must(first, "模型收到的信号").aborted).toBe(false);
   });
 
-  it("没传 signal 时，Runtime 自己给一条永不中止的（而不是把 undefined 传下去）", async () => {
+  it("没传 signal 时，Runtime 自己给一条（而不是把 undefined 传下去）", async () => {
     const h = harness([callTool(readFile), respond("好了")]);
     await h.run();
     const model = h.model as ReturnType<typeof scriptedModel>;

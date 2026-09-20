@@ -2,11 +2,12 @@
 //   step 2 -> Agent Core domain types   (done, type-only)
 //   step 3 -> the minimal loop          (done: the package's first runtime code)
 //   step 4 -> Agent Runtime             (done: one Task becomes an event stream)
+//   step 5 -> budget & cancellation     (done: runs stop predictably)
 //
 // 词汇是 `export type`：类型在编译后被完全擦除。
-// 步 3 之后这里开始导出真实运行时代码——先是 Core 的循环，再是驱动它的 Runtime。
-// 仍然没有任何 SDK、进程、网络或存储：Runtime 的事件落在注入的 `RunLog` 上，
-// 内存实现由调用方自己建（`memoryRunLog()`）。
+// 步 3 之后这里开始导出真实运行时代码——先是 Core 的循环，再是驱动它的 Runtime，
+// 然后是让这次 Run 停得下来的那一层。仍然没有任何 SDK、进程、网络或存储：
+// Runtime 的事件落在注入的 `RunLog` 上，内存实现由调用方自己建（`memoryRunLog()`）。
 
 export type {
   // material and provenance
@@ -70,3 +71,22 @@ export { assertAppendOnly, memoryRunLog } from "./runtime/run-log.js";
 export type { RunLog } from "./runtime/run-log.js";
 export { cryptoIds, sequentialIds } from "./runtime/ids.js";
 export type { IdFactory } from "./runtime/ids.js";
+
+// 预算与终止：Core 一行都不知道它们，执法与归因都在这一侧。
+// `DEFAULT_BUDGET` 是有界的那个默认值；`RunStoppedError` 是「这次 Run 必须停」
+// 穿过端口包装层回到驱动方的形状。
+export { DEFAULT_BUDGET, RunStoppedError, createBudgetGuard } from "./runtime/budget.js";
+export type {
+  BudgetGuard,
+  BudgetGuardOptions,
+  BudgetStopCode,
+  ProgressPredicate,
+  RunStop,
+} from "./runtime/budget.js";
+export { createRunSignal } from "./runtime/termination.js";
+export type {
+  RunSignal,
+  RunSignalOptions,
+  TerminationCause,
+  TimeoutSignalFactory,
+} from "./runtime/termination.js";
