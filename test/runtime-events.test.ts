@@ -137,7 +137,8 @@ describe("一条事件流的形状", () => {
     const events = await h.run();
 
     expect(typesOf(events)[0]).toBe("run_started");
-    expect(events.map((event) => event.sequence)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    // 步 8 之后多一条 `usage_reported`（账目排在终态之前），所以是 0..9
+    expect(events.map((event) => event.sequence)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
     // 身份来自注入的工厂，而不是随手 uuid——所以这条断言是确定的，不是「大概不重复」。
     const runIds = new Set(events.map((event) => event.runId));
@@ -157,6 +158,9 @@ describe("一条事件流的形状", () => {
       "observation_added", // 结果被组装成观测、进了状态
       "model_requested", // 下一轮
       "decision_made",
+      // 步 8：账目排在终态事件**之前**。它是账，不是结论——回放的状态机也把它
+      // 标成"不影响状态"，所以这个顺序只关乎"先看清花了多少，再看为什么停"。
+      "usage_reported",
       "run_completed",
     ]);
   });
@@ -293,6 +297,7 @@ describe("工具调用在事件流里的样子", () => {
       "model_requested",
       "decision_made",
       "tool_started",
+      "usage_reported",
       "run_failed",
     ]);
     expect(must(only(events, "run_failed")[0], "run_failed").error).toEqual({
@@ -352,6 +357,7 @@ describe("一次 Run 怎么结束", () => {
       "run_started",
       "model_requested",
       "decision_made",
+      "usage_reported",
       "human_input_requested",
     ]);
     expect(must(only(events, "human_input_requested")[0], "human_input_requested").question).toBe(
@@ -540,8 +546,9 @@ describe("事件日志", () => {
     expect(firstId).toBe("t-run-1");
     expect(secondId).toBe("t-run-2");
     expect(secondId).not.toBe(firstId);
-    expect(log.read(firstId).map((event) => event.sequence)).toEqual([0, 1, 2, 3]);
-    expect(log.read(secondId).map((event) => event.sequence)).toEqual([0, 1, 2, 3]);
+    // 两个 Run 的账本各自从 0 起（步 8：各 5 条事件——多出来的那条是各自独立报的账）。
+    expect(log.read(firstId).map((event) => event.sequence)).toEqual([0, 1, 2, 3, 4]);
+    expect(log.read(secondId).map((event) => event.sequence)).toEqual([0, 1, 2, 3, 4]);
     expect(log.read(firstId).every((event) => event.runId === firstId)).toBe(true);
   });
 });
@@ -611,6 +618,75 @@ describe("信号：同一条被交到两端", () => {
     expect(signal).toBeInstanceOf(AbortSignal);
     expect(signal.aborted).toBe(false);
     expect(must(h.tools.signals[0], "工具收到的信号")).toBe(signal);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 用量：从端口记账 → 事件流
+//
+// 这一组补的是一个**真实的覆盖缺口**：步 8 之前假模型不实现 `beginRun`，
+// 于是所有测试里 `usage_reported` 的用量永远是 `null`——"数字真的从模型端口
+// 流进了事件流"这件事一条断言都没有，而它正是步 8 新接的链路。
+// ---------------------------------------------------------------------------
+
+describe("用量账目从端口流进事件流", () => {
+  it("有一轮没报数时总和是「未知」，不是把报过的几轮加起来冒充总额", async () => {
+    const script = [callTool(readFile), callTool(grep), respond("好了")];
+    const h = harness(script, toolBehaviors, {
+      model: scriptedModel(script, {
+        // 第 0 轮不报数（模拟 deepseek 那条已知缺口），第 1、2 轮各报 100/20
+        usage: (call) =>
+          call === 0 ? { inputTokens: null, outputTokens: null } : { inputTokens: 100, outputTokens: 20 },
+      }),
+    });
+    const events = await h.run();
+
+    const usage = must(only(events, "usage_reported")[0], "usage_reported").usage;
+    // "null 是传染源"这条规则在事件流上的样子：少一个数比多一个假数好。
+    expect(usage.inputTokens).toBeNull();
+    expect(usage.outputTokens).toBeNull();
+    // 与用量不同，工具调用次数是我们自己数的，它一直准
+    expect(usage.toolCalls).toBe(2);
+    expect(usage.model).toBe(MODEL_NAME);
+  });
+
+  it("每次都报数时，事件里的数是各轮之和", async () => {
+    const script = [callTool(readFile), callTool(grep), respond("好了")];
+    const h = harness(script, toolBehaviors, {
+      model: scriptedModel(script, { usage: { inputTokens: 100, outputTokens: 20 } }),
+    });
+    const events = await h.run();
+
+    // 三次 decide：两次工具调用 + 一次收工
+    const usage = must(only(events, "usage_reported")[0], "usage_reported").usage;
+    expect(usage.inputTokens).toBe(300);
+    expect(usage.outputTokens).toBe(60);
+  });
+
+  it("端口没有账本时（不实现 beginRun）用量是 null，而不是零", async () => {
+    // 这是**唯一**一条覆盖 `usageOf(null)` 的断言：`beginRun` 在端口上可选，
+    // 不实现它是一个合法形态，Runtime 既不能崩，也不能编一个 0 出来。
+    const h = harness();
+    const events = await h.run();
+
+    const usage = must(only(events, "usage_reported")[0], "usage_reported").usage;
+    expect(usage.inputTokens).toBeNull();
+    expect(usage.outputTokens).toBeNull();
+  });
+
+  it("一次 Run 恰好一条 usage_reported——失败路径上也有，且只有一条", async () => {
+    const failing: ModelPort = {
+      async decide(): Promise<Decision> {
+        throw new Error("端口炸了");
+      },
+    };
+    const h = harness([respond("用不上")], toolBehaviors, { model: failing });
+    const events = await h.run();
+
+    // 一次失败的 Run 恰恰是最想知道"已经花掉多少"的那一次，所以账目照样要报；
+    // 而报两次会让同一笔花费在 trace 里出现两遍。
+    expect(only(events, "usage_reported")).toHaveLength(1);
+    expect(typesOf(events).at(-1)).toBe("run_failed");
   });
 });
 

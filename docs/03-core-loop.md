@@ -151,7 +151,7 @@ gen.next()                     → run_started 之后的第一轮
 | 人工回答如何进入 transcript（resume 的 `reduce` 形状） | step 4/5 | 本步只把问题记进 `pendingQuestion`：`ask_human` 之后循环停住、一次模型都不再问。「谁把回答交回来」是挂起/恢复的语义，在没有驱动方之前设计它只是猜。 |
 | 截断、参数校验、单次调用超时 | step 6 | 它们是执行层的执法，本步的假组装点只组装。**步 6 已落地**：`src/runtime/tool-runner.ts`；Core 在那个步骤里一行都没改，这正是本节那条接缝要证明的事（见 `docs/06-tool-execution.md`）。 |
 | 预算、取消执法、`no_progress` 的判定 | step 5 | 谓词已在这里（`hasProgress`），执法在驱动方。 |
-| `Context` 的生产消费者 | step 8 | 本步由测试固定住投影的形状，免得适配器自己发明第二套。 |
+| `Context` 的生产消费者 | **step 8 已落地** | 本步由测试固定住投影的形状，免得适配器自己发明第二套。`src/adapter/pi/history.ts` 用的正是 `renderContext`：任务面的每个字段（`goal` / `repoRoot` / `checks` / `availableTools` / `iteration`）都从投影里拿，一个都没自己发明。**预测成立**（见 `docs/08-pi-adapter.md` 决定 9）。 |
 | `ToolOutcome` 的耗时、`toolCallId` | step 4/6 | 时间是 Runtime 的词汇，Core 不认识它。 |
 
 ## 六、局限（如实记录）

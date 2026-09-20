@@ -61,23 +61,32 @@ Each step is one commit and proves one first-principles claim.
 
 ## Status
 
-Step 7 done. The event log is durable now, and it is still the only source of truth. A run writes
-one JSON line per event under `runs/<runId>/events.jsonl`; a session index records which runs
-belong to which session and nothing else — `status` / `startedAt` / `updatedAt` are **derived from
-the log** rather than stored beside it, because a second copy of "how far did it get" is a second
-truth that drifts without telling anyone. A record ends at its newline: a half-written tail (a
-crash mid-append) is dropped on read and repaired before the next append, while a
-newline-terminated line that will not parse is corruption and is reported loudly. Serialization
-round-trips before it is written, so the log can never contain a line that reads back as something
-else. `replayAgentState(events, task)` rebuilds the exact state a live run passed through, because
-it folds the events through step 3's own `reduce` — one implementation, three consumers (live
-execution, replay, unit tests). Every prefix of a log is a valid recovery point. The two events it
-cannot rebuild yet (a human answer has no state transition) are refused, not skipped. The Pi
-adapter and the CLI are still ahead.
+Step 8 done. The Pi Agent SDK is now behind the ports — and behind the ports is a claim you
+can check by deleting a directory: **remove `src/adapter` and the package still compiles and
+still runs to completion with a fake model.** The SDK ships two layers, and which one to use
+was the whole of this step: `pi-coding-agent` owns an entire loop (the loop step 3 gave to the
+Core), while `pi-ai` owns a single model turn, which is exactly what `ModelPort.decide` is. So
+`decide` is built on `pi-ai`'s stream, and `pi-coding-agent`'s `defineTool` is used the other
+way around — to prove the same `ToolPort` also drives the SDK's own loop. Both directions work,
+which is what "replaceable" means. The base version is pinned to `0.84.2`; a range would make
+the mapping table expire silently.
+
+Termination is expressed as tools (`submit_report` / `ask_human`) that the adapter consumes and
+**never** hands to `ToolPort` — deciding to stop is not a tool execution. The stream does not
+reject on provider failure: it ends with a `stopReason: "error"` message, so failure detection is
+`stopReason`, not `try/catch` (only-`try/catch` hands the provider's error text back as a
+report). Retries have exactly one owner — the adapter pins SDK `maxRetries` to 0, and the type
+says so; the retry policy lives in `src/runtime/retry.ts` and only reads normalized error codes.
+Cancellation carries no code, because only the Runtime can tell "the user cancelled" from "the
+wall clock ran out". Usage is `null` when a provider does not report it, and the per-run ledger
+distinguishes "empty" from "unknown" — getting that wrong made every token count silently
+`null`, which is documented in full in `docs/08-pi-adapter.md`. Three real repository tools
+(`read_file` / `list_dir` / `search_text`) now read the actual filesystem, validating their own
+JSON Schema and confining every path to the repository root. The CLI and trace are ahead.
 
 Per-step reasoning lives in `docs/02-core-contracts.md`, `docs/03-core-loop.md`,
-`docs/04-run-events.md`, `docs/05-budget-cancellation.md`, `docs/06-tool-execution.md` and
-`docs/07-durability-replay.md`.
+`docs/04-run-events.md`, `docs/05-budget-cancellation.md`, `docs/06-tool-execution.md`,
+`docs/07-durability-replay.md` and `docs/08-pi-adapter.md`.
 
 ## Commands
 
@@ -85,6 +94,7 @@ Per-step reasoning lives in `docs/02-core-contracts.md`, `docs/03-core-loop.md`,
 npm ci
 npm run typecheck
 npm test
+npm run build
 ```
 
 Node >= 22 is required.

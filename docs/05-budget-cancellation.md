@@ -141,13 +141,14 @@ Runtime 一个都不认。
 `RunBudget` 里有 `maxInputTokens` / `maxOutputTokens`（步 2 的词汇），本步没有实现它们
 的检查。两条理由，第二条是决定性的：
 
-1. 没有 usage 来源——步 8 之前拿不到真实 token 数，任何检查都是拿 0 去比；
+1. 没有 usage 来源——步 8 之前拿不到真实 token 数，任何检查都是拿 0 去比（**步 8 已补上**：`ModelPort.beginRun` 交出这次 Run 的账本，见 `docs/08` 决定 7）；
 2. 更关键的是**没有对应的失败码**。`RunErrorCode` 里没有 token 类（步 4 用
    `satisfies` 把这张表钉死了，加码会当场编译不过）。硬塞成 `budget_iterations`
    会让 trace 说错停止原因：一次因为 token 花光而停的 Run 会被记成「轮数用完了」。
 
-宁可留一个显式的缺口，也不让 trace 撒谎。加它的条件很清楚：步 8 有了真实 usage 时，
-连同一个新的失败码一起加。
+宁可留一个显式的缺口，也不让 trace 撒谎。加它的条件很清楚：有了真实 usage 时，连同一个新的失败码一起加。
+
+**条件在步 8 满足，两样一起加了**：`budget_tokens` 进了 `RunErrorCode`，执法点是 `beforeModel(state, spent)`——它拿账本**现读**的用量去比，而不是拿一个缓存的数（缓存会让「这个 Run 花了多少」有两个答案）。一条必须记住的规则：**未知（`null`）永不算超限**。把「没测到」当成「没花钱」会放行一个可能已经超额的 Run，那比漏报更糟——所以不报数的 provider 不会因为这个预算被杀，而这件事在 `usage_reported` 里是看得见的（那两个数就是 `null`）。
 
 ### 3. 默认预算是**有界**的，而它仍然可以关掉
 
@@ -216,8 +217,7 @@ npm test
 
 `test/runtime-events.test.ts`（31 条）按边界决定 4 改了三处断言，其余原样。
 `test/no-runtime-deps.test.ts` 未改：`src/runtime` 今天只用了 Node 的全局
-`AbortSignal` / `crypto`，没有一行 SDK import——步 8 会把「core 与 runtime 零 SDK import」
-写成断言，现在这条已经满足。
+`AbortSignal` / `crypto`，没有一行 SDK import——**步 8 把「core 与 runtime 零 SDK import」写成了断言**：不只是 SDK，任何裸包名都不许出现（一个 `import { z } from "zod"` 同样会把第三方形状带进 Core 的语义里）。当时满足的这条，现在有人守着。
 
 全量：`94 passed / 5 files`，`typecheck` 0 error。
 
@@ -234,16 +234,16 @@ npm test
 
 | 推迟的 | 推迟到 | 理由 |
 |---|---|---|
-| 重试（`maxRetries` 已在词汇里，本步不消费它） | step 8 | 重试要有「这个错误值不值得重试」的判断，而那需要 provider 的错误分类——映射表在适配器的文档里。 |
-| token 预算的执法 | step 8 | 见边界决定 2：没有 usage 来源，也没有对应的失败码。 |
-| 单次调用的超时、参数校验、结果截断 | step 6 | 它们属于执行层；今天假工具不做这三件事，`budget_timeout` 与 `timeout` 的分工在文档里说清了。**步 6 已落地**：`timeout` 有了第一个产生者（工具侧，被隔离成一条观测），而同一个码在模型侧仍然致命（步 8）——两侧后果不同的理由在 `docs/06-tool-execution.md` 边界决定 3。 |
+| 重试（`maxRetries` 已在词汇里，本步不消费它） | **step 8 已落地** | 重试要有「这个错误值不值得重试」的判断，而那需要 provider 的错误分类——映射表在 `src/adapter/pi/errors.ts`，政策在 `src/runtime/retry.ts`（只认归一后的码，一行 provider 词汇都没有）。**两个所有者，两张表。** 分类判据只有一句：重发能不能改变结果。 |
+| token 预算的执法 | **step 8 已落地** | 见边界决定 2：当时没有 usage 来源也没有失败码，两样都在步 8 补上了（`ModelPort.beginRun` + `budget_tokens`）。 |
+| 单次调用的超时、参数校验、结果截断 | step 6 | 它们属于执行层；今天假工具不做这三件事，`budget_timeout` 与 `timeout` 的分工在文档里说清了。**步 6 已落地**：`timeout` 有了第一个产生者（工具侧，被隔离成一条观测），而同一个码在模型侧仍然致命——**步 8 履行了这条**：适配器把超时归一成 `timeout` 抛出，它不落成观测、而是落成 `run_failed`。两侧后果不同的理由在 `docs/06-tool-execution.md` 边界决定 3。 |
 | `human_input_received` / `run_resumed`（挂起怎么被叫醒） | 仍未落地 | 需要有「谁交回答案、怎么重新进入循环」的恢复入口，而恢复要先有持久化。**步 7 落了持久化，但没有落恢复**：回放明确拒绝这两条事件，因为把人的回答写进 `transcript` 的那一步状态推进不存在（`docs/07-durability-replay.md` 边界决定 6）。 |
-| 重试次数、退避策略 | step 8 | 同第一行。 |
+| 重试次数、退避策略 | **step 8 已落地** | 同第一行。`maxRetries` 的所有者是 `RunBudget`（调用方说的话），退避参数是 `DEFAULT_RETRY`（我们的事）：250ms 起、翻倍、封顶 4s。不做抖动——单进程单 Run，没有收益的随机性只是噪声。 |
 
 ## 七、局限（如实记录）
 
 1. **只有假通道。** 「适配器在信号中止时拒绝在途调用」这件事今天是 `inFlight` 这个假
-   适配器在兑现（步 8 会在真实适配器里兑现）。所以本步证明的是**执法结构性**，不是
+   适配器在兑现。**步 8 在真适配器里兑现了这一条**：`signal` 原样交给 `pi-ai` 的流，而流在 `aborted` 时以 `stopReason: "aborted"` 收尾、**抛出的错误不带码**（归因权交回 Runtime——它手上有 `cause()`，分得清"用户取消"与"墙钟到点"，适配器分不清）。所以本步证明的是**执法结构性**，不是
    「真实 provider 一定会被我们打断」。
 2. **`no_progress` 的触发条件不可达**（边界决定 1）。执法有效，但今天的 Core 里没有
    东西能让它响。**这是本步最应该被记住的局限**：一条不会敲响的警报，与一条没接的

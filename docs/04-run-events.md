@@ -58,7 +58,7 @@ respond（一趟收工）
 | `run_failed` | 发射 | 见边界决定 4 |
 | `human_input_received` / `run_resumed` | 不发射 | 挂起的 Run 怎么被叫醒的语义仍未落地（步 7 落地的是持久化与回放，而回放会拒绝这两条事件——见第五节推迟表）。 |
 | `run_cancelled` | 不发射 | 取消的执法在步 5 |
-| `usage_reported` | 不发射 | 它的载荷一半来自适配器（token 数）。步 8 之前发射等于伪造数据 |
+| `usage_reported` | 不发射 | 它的载荷一半来自适配器（token 数）。步 8 之前发射等于伪造数据。**步 8 已发射**，而且守住了这条：provider 没报数时写 `null`、不写 `0`（`docs/08` 决定 6） |
 
 ## 三、六个刻意做出的边界决定
 
@@ -107,7 +107,7 @@ respond（一趟收工）
 
 归一化规则只有一条：**带合法 `code` 的抛出物原样保留，其余一律 `runtime_error`。**
 Runtime 不认识 provider，但它认识那十个码，所以它不猜、不映射、不从消息文本里认字符串；
-provider 特有的错误怎么变成这十个码，是**适配器**的事（映射表在步 8）。
+provider 特有的错误怎么变成这十个码，是**适配器**的事（**步 8 已落地**：`src/adapter/pi/errors.ts`——先看状态码、再看文本，认不出来就诚实地落到 `runtime_error`）。
 
 `RunErrorCode` 与这张表由一行 `satisfies Record<RunErrorCode, true>` 绑死：
 谁往分类里加一个码，`src/runtime/run-agent.ts` 立刻编译不过——
@@ -190,7 +190,7 @@ npm test
 |---|---|---|
 | 预算与取消的执法（`run_cancelled`、「中止后不再发起任何调用」） | step 5 | 本步只证明同一条 `signal` 被原样转交给模型与工具两端（有测试）；检查 `aborted` 的时机是下一脚的决定。**步 5 已落地**：交出去的信号变成「外部取消 + 墙钟」组合出来的那条，理由与证据在 `docs/05-budget-cancellation.md`。 |
 | `human_input_received` / `run_resumed` | 仍未发射 | 挂起怎么被叫醒要有「谁交回答案、怎么重新进入循环」的语义，本步没有恢复入口。**步 5/7 都没能落地它**：持久化与回放到了（步 7），但回放会**明确拒绝**这两条事件，因为把人的回答写进 `transcript`（`role: "human"`）的那一步状态推进还不存在——`reduce` 只接受决策（`docs/07-durability-replay.md` 边界决定 6）。 |
-| `usage_reported` | step 8/9 | 载荷里的 token 数在步 8 之前不存在。Runtime 知道的 `toolCalls` / `durationMs` 会随 trace（步 9）呈现。 |
+| `usage_reported` | **step 8 已落地**，呈现留给 trace（步 9） | 载荷里的 token 数在步 8 之前不存在。Runtime 知道的 `toolCalls` / `durationMs` 会随 trace（步 9）呈现。**步 8 的补充**：它恰好发射一条（失败、取消路径上也有，因为一次失败的 Run 恰恰最想知道花了多少），且排在终态事件**之前**。 |
 | 事件的持久化（一行一事件的 JSONL） | **step 7（已落地）** | 契约与内存实现在 `src/runtime/run-log.ts`，载体在 `src/store/run-log-jsonl.ts`。契约属于 Runtime，载体属于存储——而且**契约一行都没改**（`docs/07-durability-replay.md`）。 |
 | `sessionId` | **step 7（已落地）** | 事件基础字段里**仍然没有它**，这是刻意的（见下面第 3 条的追加）：它落在会话索引 `sessions/<sessionId>.json` 里，因为「这个 Run 属于哪个会话」是存储的问题，不是事件的问题。 |
 | `missingMaterial` 的填充 | step 6 | 见边界决定 5。**步 6 已落地**：`collectMissingMaterial(state)` 读三种缺失（观测带 error / 观测截断 / 有 `call_tool` 意图而无观测），与执行层的错误码住在同一个文件里——写侧与读侧必须是同一套判断（`docs/06-tool-execution.md` 边界决定 8）。 |
@@ -198,7 +198,7 @@ npm test
 ## 六、局限（如实记录）
 
 1. **只有假通道。** 与本步的事件流对照的是脚本化的决策与工具桩，
-   真实 provider 的方差、协议差异、凭据问题一概还没遇到（步 8）。
+   真实 provider 的方差、协议差异、凭据问题一概还没遇到。**步 8 之后仍然如此**：适配器已经接在真的 `pi-ai` 流上（真注册、真 auth 解析、真 `AssistantMessageEventStream`），但「模型」是 SDK 自带的 faux provider——真凭据那条路径（`envModelIdentity()`）写好了、一次都没跑过（`docs/08` 局限一）。
 2. **`run_started` 不带 `task`。** 步 2 定的词汇如此，所以单看事件流还看不出这次 Run
    在做什么——那个问题的答案在 `Task` 的持久化（步 7）与 trace（步 9），
    本步不擅自往事件里塞字段。
@@ -219,4 +219,4 @@ npm test
 5. **`durationMs` 是 `clock()` 的两次调用之差**，测试里来自计数器时钟（恒定步长），
    所以它证不了「真实耗时的精度」——只证明了它确实来自注入的时钟、且大于零。
 6. **`toRunError` 不认识 provider 的词汇。** 一个带 `code: "rate_limited"` 的错误
-   只有在适配器主动这么抛的时候才会被保留；映射表本身在步 8。
+   只有在适配器主动这么抛的时候才会被保留；映射表本身在 `src/adapter/pi/errors.ts`（**步 8 已落地**）。

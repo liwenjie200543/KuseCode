@@ -284,7 +284,7 @@ describe("取消：中止之后不再发起任何调用", () => {
     const h = harness({ model });
     const events = await h.run(controller.signal);
 
-    expect(typesOf(events)).toEqual(["run_started", "model_requested", "run_cancelled"]);
+    expect(typesOf(events)).toEqual(["run_started", "model_requested", "usage_reported", "run_cancelled"]);
     expect((h.model as FakeModel).calls).toBe(1);
     expect(h.tools.calls).toHaveLength(0);
     // 恰好一条终态事件：取消不会被算成「取消 + 失败」两件事。
@@ -311,6 +311,9 @@ describe("取消：中止之后不再发起任何调用", () => {
       "model_requested",
       "decision_made",
       "tool_started",
+      // 步 8：取消与失败一样要报账——**尤其**在这两种收场里，因为"已经花掉多少"
+      // 正是这种 Run 最该回答的问题。
+      "usage_reported",
       "run_cancelled",
     ]);
     // 「有意图、无观测」在这一刻是真实的：意图落下了，结果永远不会回来——
@@ -345,6 +348,9 @@ describe("取消：中止之后不再发起任何调用", () => {
       "model_requested",
       "decision_made",
       "tool_started",
+      // 步 8：取消与失败一样要报账——**尤其**在这两种收场里，因为"已经花掉多少"
+      // 正是这种 Run 最该回答的问题。
+      "usage_reported",
       "run_cancelled",
     ]);
     // 日志里有一条 tool_started 而没有 tool_completed——这不是丢失，是步 4 定义的
@@ -387,8 +393,12 @@ describe("消费者离场：日志仍然收尾", () => {
     const all = h.log.read(must(seen[0], "首个事件").runId);
     // 前缀性质没有被破坏：消费者一条不多、一条不少、顺序一致。
     expect(all.slice(0, seen.length)).toEqual(seen);
-    // 多出来的两条：write-ahead 的 `observation_added`，以及最后补的终态。
-    expect(all.length).toBe(seen.length + 2);
+    // 多出来的三条：
+    //   1. `observation_added`——write-ahead，它已经落日志但还没送到消费者手上；
+    //   2. `usage_reported`（步 8）——钱是在消费者离场**之前**花掉的，
+    //      它不该因为没人看就消失；
+    //   3. 最后补的终态 `run_cancelled`。
+    expect(all.length).toBe(seen.length + 3);
     expect(typesOf(all).at(-1)).toBe("run_cancelled");
     // 恰好一条终态事件——它补上了步 4 那个「没有名字的结局」，也没有多余地补第二条。
     expect(all.filter((event) => TERMINAL_TYPES.includes(event.type))).toHaveLength(1);

@@ -21,18 +21,23 @@
  */
 
 import { hasProgress } from "../core/loop.js";
-import type { AgentState, RunBudget, RunErrorCode, ToolIntent } from "../core/types.js";
+import type { AgentState, ModelUsage, RunBudget, RunErrorCode, ToolIntent } from "../core/types.js";
 
 /**
- * 我们自己喊停时用的那三个码。
+ * 我们自己喊停时用的那几个码。
  *
- * 为什么写成 `Extract` 而不是另写一个联合：这三个码必须**本来就是** `RunErrorCode`
+ * 为什么写成 `Extract` 而不是另写一个联合：这些码必须**本来就是** `RunErrorCode`
  * 的一部分。谁把 `budget_iterations` 从词汇里删掉，这一行立刻编译不过——
  * 于是「预算停下来时，trace 说得出一个合法原因」这件事不会悄悄失效。
+ *
+ * `budget_tokens` 是步 8 才加进来的：在此之前 token 预算的执法是**故意缺席**的
+ * （没有 usage 来源、也没有对应的失败码，硬塞成别的码会让 trace 说错原因）。
+ * 现在两者都有了，于是它出现在这张 `Extract` 里——加它的那一刻，
+ * 这个类型的成员资格就是"它真的会被用到"的证明。
  */
 export type BudgetStopCode = Extract<
   RunErrorCode,
-  "budget_iterations" | "budget_tools" | "no_progress"
+  "budget_iterations" | "budget_tools" | "budget_tokens" | "no_progress"
 >;
 
 /** 这次 Run 停下来的原因，由我们这一侧给出。 */
@@ -81,9 +86,14 @@ export type ProgressPredicate = (before: AgentState, after: AgentState) => boole
  * - `maxToolCalls: 64`：比迭代数宽，因为一轮可以调多个工具；
  * - `timeoutMs` 10 分钟：够一次真实任务，又不至于让一次卡死的 Run 挂着过夜；
  * - `maxRetries: 2`：重试本身是步 8 的事（要先有 provider 错误分类），本步不动它；
+ *   **步 8 已落地**：它现在被 `retry.ts` 消费（只对 `rate_limited` / `timeout` /
+ *   `provider_unavailable` 重试，取消永不重试）。
  * - token 两项为 `null`：本步**不执法**，理由见 docs/05（没有对应的失败码，
  *   也没有 usage 来源）。`null` 在这里的含义是「不设上限」，与「我们还没法测」是
  *   同一件事——在能测之前，设一个数字只是自欺。
+ *   **步 8 已落地用法**：usage 来源与 `budget_tokens` 都有了，执法在
+ *   `beforeModel(state, spent)`；默认仍然是 `null`，因为"一个猜出来的上限"
+ *   比"没有上限"更危险——调用方要给数字，我们才执法。
  */
 export const DEFAULT_BUDGET: RunBudget = Object.freeze({
   maxIterations: 32,
@@ -94,10 +104,51 @@ export const DEFAULT_BUDGET: RunBudget = Object.freeze({
   maxOutputTokens: null,
 });
 
-/** 预算的执法者。三个检查点，每个都站在一次「动作」的前面。 */
+/**
+ * 这次用量是否**超过**了给定的上限。
+ *
+ * `null` 上限（不设上限）永远不算超；**`null` 用量（provider 没报）也永远不算超**。
+ * 后一条是刻意的：deepseek 路径下 provider 可能不报 token，那时若把"未知"当成
+ * "已经超了"，每一次 Run 都会立刻失败；若把"未知"当成 `0`，token 预算就形同虚设。
+ * 两种都不是"执法"，而是自欺。所以判据只建立在**已知的**数字上：
+ * 不知道就不拦，但 `usage_reported` 里会老实写着 `null`。
+ *
+ * 它住在 Runtime 而不是适配器里：适配器负责"provider 说花了多少"，
+ * "花多少算超"是预算政策——两个问题的所有者不同。
+ */
+export function exceedsTokenBudget(
+  usage: ModelUsage,
+  maxInputTokens: number | null,
+  maxOutputTokens: number | null,
+): "input" | "output" | null {
+  if (maxInputTokens !== null && usage.inputTokens !== null && usage.inputTokens > maxInputTokens) {
+    return "input";
+  }
+  if (
+    maxOutputTokens !== null &&
+    usage.outputTokens !== null &&
+    usage.outputTokens > maxOutputTokens
+  ) {
+    return "output";
+  }
+  return null;
+}
+
+/** 这次 Run 已经花掉的账目。给 `usage_reported` 用。 */
+export interface BudgetSpend {
+  /** 已经**发起**的工具调用次数（含被后面那一道闸门拦下的那次吗？不含——见 `beforeTool`）。 */
+  readonly toolCalls: number;
+}
+
+/** 预算的执法者。检查点都站在一次「动作」的前面。 */
 export interface BudgetGuard {
-  /** 每一轮**问模型之前**。`state` 是这一轮的入参状态。 */
-  beforeModel(state: AgentState): void;
+  /**
+   * 每一轮**问模型之前**。`state` 是这一轮的入参状态。
+   *
+   * `spent` 是**到目前为止**模型报过的用量（步 8）。省略即"用量未知"，
+   * 于是 token 预算不执法——这与"没有 usage 来源就不设 token 上限"是同一条规矩。
+   */
+  beforeModel(state: AgentState, spent?: ModelUsage): void;
   /**
    * 每一次**决定要发起工具调用**之后、`tool_started` 之前。
    *
@@ -115,6 +166,14 @@ export interface BudgetGuard {
    * 而是结构性的。
    */
   assertNotCancelled(what: string): void;
+  /**
+   * 这次 Run 到目前为止的账目。
+   *
+   * 它是 `usage_reported` 里 `toolCalls` 的唯一来源：数在这里，因为这里是
+   * 唯一知道"哪些调用真的发起过"的地方（`beforeTool` 是意图点）。
+   * 让驱动方另数一遍会在两个计数之间制造可以分叉的余地。
+   */
+  spent(): BudgetSpend;
 }
 
 export interface BudgetGuardOptions {
@@ -149,8 +208,32 @@ export function createBudgetGuard(options: BudgetGuardOptions): BudgetGuard {
   };
 
   return {
-    beforeModel(state) {
+    beforeModel(state, spent) {
       if (signal.aborted) cancelled("模型调用");
+
+      // token 账目排在"没前进"之前：它是一次**已经发生**的支出，而"没前进"是一个
+      // 关于这一轮的判断。先说已经花了什么，比先说这一轮像不像空转更具体。
+      if (spent !== undefined) {
+        const over = exceedsTokenBudget(spent, budget.maxInputTokens, budget.maxOutputTokens);
+        if (over === "input") {
+          throw new RunStoppedError({
+            kind: "budget",
+            code: "budget_tokens",
+            message:
+              `输入已用 ${spent.inputTokens} token，超过输入预算 ${budget.maxInputTokens}。` +
+              `这一次请求没有发出——把材料变少（更窄的读取、更少的轮次）再重跑。`,
+          });
+        }
+        if (over === "output") {
+          throw new RunStoppedError({
+            kind: "budget",
+            code: "budget_tokens",
+            message:
+              `输出已用 ${spent.outputTokens} token，超过输出预算 ${budget.maxOutputTokens}。` +
+              `这一次请求没有发出——把结论写得更短，或者提高预算。`,
+          });
+        }
+      }
 
       if (previous !== null && !progress(previous, state)) {
         throw new RunStoppedError({
@@ -188,6 +271,10 @@ export function createBudgetGuard(options: BudgetGuardOptions): BudgetGuard {
 
     assertNotCancelled(what) {
       if (signal.aborted) cancelled(what);
+    },
+
+    spent() {
+      return { toolCalls };
     },
   };
 }

@@ -12,7 +12,8 @@
  * 这里没有任何 Node 内置模块，也没有 SDK——它和 Core 一样纯。
  */
 
-import type { AgentState, Decision, ModelPort } from "../core/types.js";
+import { UsageAccumulator } from "../core/usage.js";
+import type { AgentState, Decision, ModelPort, ModelUsage } from "../core/types.js";
 
 /** 脚本用尽：循环问了一次脚本回答不了的决策。 */
 export class FakeScriptExhaustedError extends Error {
@@ -38,11 +39,38 @@ export interface FakeModel extends ModelPort {
   readonly signals: readonly AbortSignal[];
 }
 
+/**
+ * 每一轮报多少账。三种取值对应三种**真实存在**的形态，别把它们混成一个：
+ *
+ * | 取值 | 假模型的行为 | 它对应现实里的什么 |
+ * |---|---|---|
+ * | `undefined`（不给） | 不实现 `beginRun` | 一个没有用量能力的模型端口 |
+ * | `null` | 实现账本，但每轮都报"未知" | deepseek 路径：调用了，但没报 usage |
+ * | 一个用量 / 一个函数 | 实现账本并逐轮累加 | 一个正常报数的 provider |
+ *
+ * 第一行与第二行的区别不是细节：`beginRun` 在端口上是可选的，而 Runtime 必须
+ * 能处理"没有账本"（`usageOf(null)`）。第三行是步 8 新接进来的那条链路——
+ * 没有它，"用量数字真的从端口流进了事件流"这件事就没有任何测试覆盖。
+ *
+ * 返回 `null` 的那一项表示"这一轮没测到"：它会记成未知，而不是零——
+ * 两种写法在账目上完全不同，规则见 `src/core/usage.ts`。
+ */
+export type FakeUsage = ModelUsage | ((callIndex: number) => ModelUsage) | null;
+
+function usageFor(report: FakeUsage, callIndex: number): ModelUsage {
+  if (report === null) return { inputTokens: null, outputTokens: null };
+  return typeof report === "function" ? report(callIndex) : report;
+}
+
 function recordingModel(
   decide: (state: AgentState, signal: AbortSignal) => Decision | Promise<Decision>,
+  usage?: FakeUsage,
 ): FakeModel {
   const seenStates: AgentState[] = [];
   const signals: AbortSignal[] = [];
+  /** 每个 Run 一个累积器，键是信号——与真适配器同一条规则、同一个实现。 */
+  const ledgers = new WeakMap<AbortSignal, UsageAccumulator>();
+  const report: FakeUsage = usage ?? null;
 
   return {
     get calls(): number {
@@ -54,10 +82,23 @@ function recordingModel(
     get signals(): readonly AbortSignal[] {
       return signals;
     },
+    // 不给用量时不实现 `beginRun`：端口上它是可选的，而"没有账本"是一个
+    // 真实的形态（Runtime 必须能处理 `usageOf(null)`）。
+    ...(usage === undefined
+      ? {}
+      : {
+          beginRun(signal: AbortSignal): { usage: () => ModelUsage } {
+            const ledger = new UsageAccumulator();
+            ledgers.set(signal, ledger);
+            return { usage: () => ledger.total() };
+          },
+        }),
     async decide(state: AgentState, signal: AbortSignal): Promise<Decision> {
       seenStates.push(state);
       signals.push(signal);
-      return decide(state, signal);
+      const decision = await decide(state, signal);
+      ledgers.get(signal)?.add(usageFor(report, seenStates.length - 1));
+      return decision;
     },
   };
 }
@@ -71,6 +112,8 @@ export interface ScriptedModelOptions {
    * 需要无限重复的场景（例如步 5 的预算与取消）显式打开它。
    */
   readonly repeatLast?: boolean;
+  /** 每一轮报多少账。省略 = 这个假模型没有账本（不实现 `beginRun`）。 */
+  readonly usage?: FakeUsage;
 }
 
 /**
@@ -97,7 +140,7 @@ export function scriptedModel(
     if (repeatLast && last !== undefined) return last;
 
     throw new FakeScriptExhaustedError(index, script.length);
-  });
+  }, options.usage);
 }
 
 /**
@@ -109,6 +152,7 @@ export function scriptedModel(
  */
 export function decidingModel(
   decide: (state: AgentState, signal: AbortSignal) => Decision | Promise<Decision>,
+  options: ScriptedModelOptions = {},
 ): FakeModel {
-  return recordingModel(decide);
+  return recordingModel(decide, options.usage);
 }

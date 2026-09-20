@@ -8,13 +8,31 @@ import { describe, expect, it } from "vitest";
 // That is only true while the Core has no runtime dependencies at all.
 // Every external integration arrives later as an adapter behind a port, and it
 // must be justified by a step in the development sequence.
+//
+// 步 8 改了这条断言，而改法本身就是一句结论：**"零依赖"变成了"恰好一个依赖，
+// 而且它被关在一个目录里"。** 原来那条（`dependencies` 必须是 `undefined`）在
+// 步 8 之后会说谎——我们确实依赖 Pi Agent SDK 了。但它真正要守的东西没变：
+// 依赖必须少、必须被指名、必须钉死版本、必须只出现在适配器目录里。
+// 所以断言换成了四条更具体的，最后一条由下面的扫描负责。
 describe("dependency posture", () => {
   const pkg = JSON.parse(
     readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
   ) as Record<string, unknown>;
 
-  it("declares no runtime dependencies", () => {
-    expect(pkg["dependencies"]).toBeUndefined();
+  it("运行时依赖恰好是那两个被钉死的 SDK 包", () => {
+    const deps = (pkg["dependencies"] ?? {}) as Record<string, string>;
+    expect(Object.keys(deps).sort()).toEqual([
+      "@earendil-works/pi-ai",
+      "@earendil-works/pi-coding-agent",
+    ]);
+  });
+
+  it("SDK 版本是精确的，不是一个范围", () => {
+    const deps = (pkg["dependencies"] ?? {}) as Record<string, string>;
+    for (const [name, range] of Object.entries(deps)) {
+      // `install latest` 会当场让 Skill 里那份 API 映射表失效（版本基线 0.84.2）
+      expect(range, `${name} 必须钉死版本`).toMatch(/^\d+\.\d+\.\d+$/);
+    }
   });
 
   it("requires Node 22 or newer", () => {
@@ -106,6 +124,11 @@ describe("fake adapters stay as pure as the Core", () => {
 //
 // 这两条都曾经是真的（步 3~6 的 runtime 一行 I/O 都没有），这一步只是把它变成
 // 可执行的约束，而不是一句会慢慢失效的描述。
+//
+// 步 8 的追加：第 2 条放宽到了 `src/tools`。那不是妥协，而是这条边界本来就该有的
+// 形状——"I/O 只准住在存储层"说的其实是**语义层不许有 I/O**。真实工具是"材料从哪来"
+// 的答案，它去读文件系统是它的职责本身；而 Runtime 仍然是零 I/O 的（第 1 条没动）。
+// 所以放宽的是"谁的职责就是碰世界"，收紧的是核心语义——方向恰好相反的两件事。
 // ---------------------------------------------------------------------------
 describe("I/O 只住在存储层", () => {
   const files = listTsFiles(srcDir);
@@ -123,16 +146,73 @@ describe("I/O 只住在存储层", () => {
     }
   });
 
-  it("src/ 下面所有 node: 引用都在 src/store 里", () => {
+  it("src/ 下面所有 node: 引用都落在允许碰外部世界的目录里", () => {
     const outside: string[] = [];
     for (const file of files) {
       for (const spec of importSpecifiers(readFileSync(file, "utf8"))) {
         if (!spec.startsWith("node:")) continue;
-        if (file.slice(repoRoot.length).replace(/\\/g, "/").startsWith("src/store/")) continue;
-        outside.push(`${file.slice(repoRoot.length)} → ${spec}`);
+        const relative = file.slice(repoRoot.length).replace(/\\/g, "/");
+        // `src/store`：事件的载体（步 7）
+        // `src/tools`：真实工具真的去读文件系统（步 8）——它就是"材料从哪来"的答案
+        if (relative.startsWith("src/store/") || relative.startsWith("src/tools/")) continue;
+        outside.push(`${relative} → ${spec}`);
       }
     }
-    expect(outside, "只有 src/store 可以碰 node: 内置模块").toEqual([]);
+    expect(outside, "只有 src/store 与 src/tools 可以碰 node: 内置模块").toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 步 8 的那条铁律：**SDK 只准出现在 src/adapter 里。**
+//
+// "把 SDK 挡在端口后面"这句话，如果没有一条可执行的检查，就只是一张架构图。
+// 这条检查比"不许 import node: 内置模块"更强，因为它拦的是**所有裸包名**：
+//
+//   - `src/core` 与 `src/runtime` 里出现任何裸包名都算越界——不只是 SDK。
+//     一个 `import { z } from "zod"` 同样会把第三方形状带进 Core 的语义里，
+//     而 Core 的词汇应该是我们自己推导出来的，不是借来的。
+//   - 相对路径也必须留在 src 之内（不许 `../../node_modules/...` 这种绕法）。
+//
+// 反过来说：如果这条测试是绿的，那么"删掉整个 src/adapter 目录，Core 与 Runtime
+// 仍然编译、仍然跑得完假模型"就成立——这才是"SDK 可替换"的可执行含义。
+// ---------------------------------------------------------------------------
+describe("SDK 只住在适配器里", () => {
+  const guarded: ReadonlyArray<readonly [string, string]> = [
+    ["src/core", "Core"],
+    ["src/runtime", "Runtime"],
+  ];
+
+  it("has files to check", () => {
+    for (const [dir] of guarded) {
+      expect(listTsFiles(join(repoRoot, dir)).length, dir).toBeGreaterThan(0);
+    }
+  });
+
+  for (const [dir, label] of guarded) {
+    it(`${label}（${dir}）不 import 任何包：没有 SDK，也没有别的第三方`, () => {
+      for (const file of listTsFiles(join(repoRoot, dir))) {
+        for (const spec of importSpecifiers(readFileSync(file, "utf8"))) {
+          const relative = file.slice(repoRoot.length);
+          expect(spec.startsWith("."), `${relative} 引用了包：${spec}`).toBe(true);
+          expect(
+            resolve(dirname(file), spec).startsWith(srcDir),
+            `${relative} 越出了 src：${spec}`,
+          ).toBe(true);
+        }
+      }
+    });
+  }
+
+  it("没有任何一个 SDK 的 import 落在 src/adapter 之外", () => {
+    const sdk = /^@earendil-works\//;
+    const outside: string[] = [];
+    for (const file of listTsFiles(srcDir)) {
+      if (file.slice(repoRoot.length).replace(/\\/g, "/").startsWith("src/adapter/")) continue;
+      for (const spec of importSpecifiers(readFileSync(file, "utf8"))) {
+        if (sdk.test(spec)) outside.push(`${file.slice(repoRoot.length)} → ${spec}`);
+      }
+    }
+    expect(outside, "只有 src/adapter 可以 import SDK").toEqual([]);
   });
 });
 

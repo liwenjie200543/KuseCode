@@ -199,12 +199,18 @@ export interface Context {
  * 失败的类型化分类。
  *
  * 存在的理由：进程外部的一次失败必须变成一个有类型、可见、可恢复的
- * Run 状态，而不是一个异常。前六个是"我们自己停的"，后四个是"外部让我们停的"。
+ * Run 状态，而不是一个异常。前几个是"我们自己停的"，后四个是"外部让我们停的"。
+ *
+ * `budget_tokens` 是步 8 加的，而且**只能**在步 8 加：步 5 拒绝提前放了它，
+ * 理由是「没有 usage 来源，也没有对应的失败码，硬塞成 budget_iterations 会让
+ * trace 说错停止原因」。步 8 带来了真实的 token 账目，于是这个码连同它的执法
+ * 一起到期——一次因为 token 花光而停的 Run，现在能说出真正的原因。
  */
 export type RunErrorCode =
   | "budget_iterations"
   | "budget_tools"
   | "budget_timeout"
+  | "budget_tokens"
   | "no_progress"
   | "rate_limited"
   | "timeout"
@@ -268,6 +274,35 @@ export interface RunBudget {
 // ---------------------------------------------------------------------------
 
 /**
+ * 模型这一次**花了多少**——token 账目。
+ *
+ * 它是 provider 唯一知道而别处永远猜不出来的事实，所以它只能由适配器提供。
+ * 每一项都允许是 `null`，这不是含糊，而是已记录的真实缺口：deepseek 路径下
+ * provider 可能根本不报 usage，那时诚实的答案是"不知道"，不是 `0`
+ * （`0` 会让成本报告变成一句谎话）。
+ *
+ * 注意它**不含** `toolCalls` / `durationMs`：那两样是 Runtime 自己数得出来的，
+ * 让适配器去报告只会多出一个会分叉的真相。
+ */
+export interface ModelUsage {
+  readonly inputTokens: number | null;
+  readonly outputTokens: number | null;
+}
+
+/**
+ * 一次 Run 的用量账本。
+ *
+ * 为什么是"每 Run 领一个"而不是让适配器自己累加：适配器是**跨 Run 复用**的对象，
+ * 若用量记在它身上，两个并发的 Run 就会共用一个账本——而"两个 Run 不共享任何账目"
+ * 是步 5 定下的不变量。把账本做成一次 Run 的对象，这条不变量就由形状保证，
+ * 而不是靠调用方自觉。
+ */
+export interface ModelUsageLedger {
+  /** 累积到此刻的用量。没有任何一次调用报过账时，两项都是 `null`。 */
+  usage(): ModelUsage;
+}
+
+/**
  * 模型端口。
  *
  * 这是整个架构里最容易被破坏的一条边界：一旦这里出现 SDK 的响应对象，
@@ -275,6 +310,20 @@ export interface RunBudget {
  */
 export interface ModelPort {
   decide(state: AgentState, signal: AbortSignal): Promise<Decision>;
+  /**
+   * 开始一个 Run，领一个用量账本。**可选**：不报账的适配器（假模型）不实现它，
+   * Runtime 于是记下"这次 Run 的 token 数未知"——而不是记下 `0`。
+   *
+   * 它拿这次 Run 的信号当身份，而不是自己再发明一个 id：信号本来就是"这一次 Run"
+   * 的唯一标识，而且是**同一个对象**——Runtime 交给 `beginRun` 与交给 `decide` 的
+   * 是它。于是"哪次调用的用量记在哪个账本上"由对象身份决定，
+   * 适配器不需要一个会泄漏、也可能猜错的"当前 Run"状态。
+   *
+   * 它是步 8 为 `usage_reported` 与 token 预算开的接缝。为什么放在端口上而不是
+   * 让调用方把用量回调传两处：账目与端口说的是同一个人（provider）的话，
+   * 拆成两条线就会有两份可以不一致的真相。
+   */
+  beginRun?(signal: AbortSignal): ModelUsageLedger;
 }
 
 /**

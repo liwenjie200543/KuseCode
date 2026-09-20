@@ -5,13 +5,19 @@
 //   step 5 -> budget & cancellation     (done: runs stop predictably)
 //   step 6 -> tool execution layer      (done: untrusted output, isolated failures)
 //   step 7 -> durability & replay       (done: the log is the truth, replay is idempotent)
+//   step 8 -> Pi Agent SDK adapter      (done: the SDK lives behind the ports)
 //
 // 词汇是 `export type`：类型在编译后被完全擦除。
 // 步 3 之后这里开始导出真实运行时代码——先是 Core 的循环，再是驱动它的 Runtime、
-// 让 Run 停得下来的那一层、把不可信的工具调用变成可信观测的执行层，
-// 最后是从事件重建状态的回放、以及让事件活下来的存储。
-// 仍然没有 SDK；Core / Runtime / 执行层 / 回放全都零 `node:` 引用（测试守着这条），
-// 只有 `src/store` 碰磁盘，而它碰的是调用方注入的路径。
+// 让 Run 停得下来的那一层、把不可信的工具调用变成可信观测的执行层、
+// 从事件重建状态的回放、让事件活下来的存储，最后是**唯一**碰 SDK 的那一层。
+//
+// 步 8 的分界线在这里看得很清楚：上面每一条都是零依赖的（Core / Runtime / 执行层 /
+// 回放 / 存储，测试守着这条），而 `src/adapter` 是 SDK 的唯一住所。所以下面这一段
+// 可以整段删掉，包仍然编译、仍然跑得完假模型——这正是"SDK 可替换"的可执行含义。
+//
+// 工具写在 `src/tools`，而且**不属于适配器**：它只有纯 JSON Schema 与 `ToolPort`
+// 实现，一行 SDK import 都没有（步 8 修正了步 6 的一条预测，见 docs/08 决定 10）。
 
 export type {
   // material and provenance
@@ -39,6 +45,9 @@ export type {
   Run,
   Session,
   RunBudget,
+  // usage
+  ModelUsage,
+  ModelUsageLedger,
   // ports
   ModelPort,
   ToolPort,
@@ -66,6 +75,11 @@ export type {
   LoopTurn,
   TerminalDecision,
 } from "./core/loop.js";
+
+// 用量账目的算术。它在 Core 里，因为 `ModelUsage` 是 Core 的类型——
+// 而"`null` 不是加法单位元"这条规则只该有**一份**（步 8 在适配器与假模型里
+// 各写一次，于是账本永远是未知；见 `docs/08` 决定 6）。
+export { UsageAccumulator, addUsage, unknownUsage } from "./core/usage.js";
 
 // Runtime：把上面的循环翻译成一条有序事件流。
 // 身份（runId / toolCallId）、事件日志的契约、终态事件的构造都在这一侧。
@@ -128,3 +142,64 @@ export type {
   SessionStoreOptions,
   StartedRun,
 } from "./store/session-store.js";
+
+// 重试政策：只认**已经归一过**的 `RunErrorCode`，一行 provider 词汇都没有。
+// 它属于 Runtime，因为"这个错误值不值得重发"是政策，而"这个错误是什么意思"
+// 是适配器的事——两个所有者，两张表，各自由 `satisfies` 钉住。
+export { DEFAULT_RETRY, isRetryable, retryDelayMs, retryPolicyFrom, shouldRetry } from "./runtime/retry.js";
+export type { RetryPolicy } from "./runtime/retry.js";
+
+// 真实工具：读仓库。**不是**适配器的一部分——它们只认 `ToolPort` 与纯 JSON Schema，
+// 所以"工具的知识"与"SDK 的词汇"在这里是分开的两件事。
+export {
+  ToolArgumentError,
+  createRepoTools,
+  declaredKeysOf,
+  resolveInsideRepo,
+} from "./tools/repo-tools.js";
+export type { JsonObjectSchema, ToolSpec, Toolbox } from "./tools/repo-tools.js";
+
+// ---------------------------------------------------------------------------
+// 下面这一段是 SDK 的唯一住所。删掉整个 `src/adapter`，包仍然编译、仍然跑得完假模型。
+//
+// 纯映射层（错误归一 / 终止协议 / 决策解码 / 对话翻译 / 工具目录）与两个端口的
+// 生产实现都在这一侧。`usageFromMessage` 是这里唯一没有从 Core 再导出的用量函数
+// （算术在 Core，见上）——适配器只负责"provider 的 `usage` 字段怎么读"。
+// ---------------------------------------------------------------------------
+
+export {
+  ASK_HUMAN_TOOL,
+  SUBMIT_REPORT_TOOL,
+  TERMINAL_TOOL_NAMES,
+  AdapterError,
+  adapterError,
+  assertNoTerminalCollision,
+  buildRequest,
+  buildSystemPrompt,
+  catalogFromToolbox,
+  catalogOf,
+  decideFromMessage,
+  envModelIdentity,
+  isTerminalTool,
+  piModelAdapter,
+  piToolDefinitions,
+  providerFailureFromStopReason,
+  providerFailureFromThrow,
+  readQuestion,
+  readReport,
+  renderObservationText,
+  taskFacingContext,
+  textOf,
+  toolCallsOf,
+  usageFromMessage,
+} from "./adapter/pi/index.js";
+export type {
+  BuildRequestOptions,
+  CatalogEntry,
+  PiModelAdapterOptions,
+  PiToolBridgeOptions,
+  ProviderFailure,
+  ProviderIdentity,
+  ProviderRequest,
+  ToolCatalog,
+} from "./adapter/pi/index.js";

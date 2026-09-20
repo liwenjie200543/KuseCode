@@ -351,6 +351,8 @@ describe("关卡三：单次调用的超时是可隔离的，Run 被停不是", 
       "model_requested",
       "decision_made",
       "tool_started",
+      // 步 8：被取消的 Run 也要报账，否则"这一次花了多少"在取消路径上没有答案。
+      "usage_reported",
       "run_cancelled",
     ]);
     // 没有观测、没有 tool_completed，也没有一条把责任推给工具的 timeout。

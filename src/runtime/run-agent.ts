@@ -33,6 +33,8 @@ import type {
   AgentRuntime,
   AgentState,
   ModelPort,
+  ModelUsage,
+  ModelUsageLedger,
   RunBudget,
   RunErrorCode,
   Task,
@@ -42,9 +44,22 @@ import { DEFAULT_BUDGET, RunStoppedError, createBudgetGuard } from "./budget.js"
 import type { ProgressPredicate } from "./budget.js";
 import { cryptoIds } from "./ids.js";
 import type { IdFactory } from "./ids.js";
+import { retryDelayMs, retryPolicyFrom, shouldRetry } from "./retry.js";
+import type { RetryPolicy } from "./retry.js";
 import type { RunLog } from "./run-log.js";
 import { createRunSignal } from "./termination.js";
 import type { TimeoutSignalFactory } from "./termination.js";
+
+/**
+ * 这次 Run 的用量账目，以及"没有账本"这件事的表示。
+ *
+ * 适配器不实现 `beginRun` 时（假模型、或任何不报账的端口），用量是**未知**的
+ * （两项 `null`），不是 `0`。它顺着 `usage_reported` 一路流到 trace，
+ * 于是"没测到"与"没花钱"在日志里是两个不同的东西——这正是本项目的规矩。
+ */
+function usageOf(ledger: ModelUsageLedger | null): ModelUsage {
+  return ledger?.usage() ?? { inputTokens: null, outputTokens: null };
+}
 
 // ---------------------------------------------------------------------------
 // 一次新 Run 的起点
@@ -120,6 +135,18 @@ export interface RunAgentOptions {
   readonly timeoutSignal?: TimeoutSignalFactory;
   /** 「这一轮有没有前进」的谓词。默认 Core 的 `hasProgress`，见 `budget.ts`。 */
   readonly progress?: ProgressPredicate;
+  /**
+   * 重试的退避参数。次数不在这里——它是 `budget.maxRetries`（消费者的预算，
+   * 不是我们的实现细节）。这里只调"等多久"。
+   */
+  readonly retry?: Partial<Omit<RetryPolicy, "maxRetries">>;
+  /**
+   * 退避时怎么等。默认真的 `setTimeout`。
+   *
+   * 注入它是为了让"重试了、等过、又成功了"这件事可以在**零真实时间**里被验证：
+   * 一个要等 250ms 的测试，跑三遍就慢到没人愿意跑，而没人愿意跑的测试等于没有。
+   */
+  readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,6 +164,7 @@ const RUN_ERROR_CODES = {
   budget_iterations: true,
   budget_tools: true,
   budget_timeout: true,
+  budget_tokens: true,
   no_progress: true,
   rate_limited: true,
   timeout: true,
@@ -194,6 +222,25 @@ export function toRunError(error: unknown): { readonly code: RunErrorCode; reado
 type EventBaseKeys = "runId" | "sequence" | "timestamp" | "type";
 type EventPayload<K extends AgentEvent["type"]> = Omit<Extract<AgentEvent, { type: K }>, EventBaseKeys>;
 
+/** 默认的等待：可被信号打断的定时器。 */
+function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (ms <= 0 || signal.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort(): void {
+      clearTimeout(timer);
+      resolve();
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 /**
  * 建一个 Runtime。
  *
@@ -210,6 +257,7 @@ export function createRuntime(options: RunAgentOptions): AgentRuntime {
   const modelName = options.modelName ?? null;
   const collectMissingMaterial = options.collectMissingMaterial ?? ((): readonly string[] => []);
   const budget = options.budget ?? DEFAULT_BUDGET;
+  const sleep = options.sleep ?? defaultSleep;
 
   async function* run(task: Task, signal?: AbortSignal): AsyncGenerator<AgentEvent, void, void> {
     const runId = ids.runId();
@@ -231,6 +279,25 @@ export function createRuntime(options: RunAgentOptions): AgentRuntime {
       ...(options.progress === undefined ? {} : { progress: options.progress }),
     });
 
+    /**
+     * 这次 Run 的用量账本。
+     *
+     * **每 Run 领一个**，拿信号当身份（`beginRun(signal)`）——于是"两个 Run 不共享
+     * 账目"这条步 5 的不变量由形状保证，而不是靠适配器自觉。端口不实现它时
+     * （假模型）账本是 `null`，用量记成未知而不是零。
+     */
+    const ledger = innerModel.beginRun?.(runSignal.signal) ?? null;
+    /**
+     * 这次 Run 的起点，即 `run_started` 那条事件的时间戳。
+     *
+     * 它**不能**在这里调一次 `clock()` 拿：那会消耗掉一个时钟刻度，于是
+     * `run_started` 的时间戳会比这次 Run 的起点晚一格——在注入计数时钟的测试里，
+     * 这条错误表现为"第一个时间戳对不上"，而在真实时钟下它会静默地差几微秒。
+     * 起点就是第一条事件，所以它从那条事件上取。
+     */
+    let runStartedAt = 0;
+    const retry = retryPolicyFrom(budget.maxRetries, options.retry ?? {});
+
     let sequence = 0;
     let state = emptyStateFor(task);
     let lastTerminal: TerminalDecision | null = null;
@@ -244,6 +311,8 @@ export function createRuntime(options: RunAgentOptions): AgentRuntime {
      * 而「没有结尾」与「崩了」在回放看来是同一件事。
      */
     let settled = false;
+    /** 账目是否已经报过（见 `emitUsage` 的幂等闸门）。 */
+    let usageEmitted = false;
     let pendingTool: { readonly id: string; readonly name: string; readonly startedAt: number } | null =
       null;
 
@@ -279,7 +348,7 @@ export function createRuntime(options: RunAgentOptions): AgentRuntime {
     const emit = async <K extends AgentEvent["type"]>(
       type: K,
       payload: EventPayload<K>,
-    ): Promise<void> => {
+    ): Promise<Extract<AgentEvent, { type: K }>> => {
       const event = { ...payload, runId, sequence, timestamp: clock(), type } as Extract<
         AgentEvent,
         { type: K }
@@ -287,6 +356,7 @@ export function createRuntime(options: RunAgentOptions): AgentRuntime {
       sequence += 1;
       await log.append(event);
       queue.push(event);
+      return event;
     };
 
     /** 把这个批次里已经落日志的事件按序送给消费者。 */
@@ -316,6 +386,9 @@ export function createRuntime(options: RunAgentOptions): AgentRuntime {
      * 正常收场比崩溃更糟。
      */
     const emitStop = async (error: unknown): Promise<void> => {
+      // 失败与取消也要报账。**尤其在失败的时候**：一次因为限流或余额耗尽的 Run
+      // 正是最想知道"已经花掉多少"的那一次，而它此前一直没有任何用量记录。
+      await emitUsage();
       const cause = runSignal.cause();
 
       if (cause === "external") {
@@ -343,22 +416,71 @@ export function createRuntime(options: RunAgentOptions): AgentRuntime {
     };
 
     /**
-     * 模型端口外面包的一层，做两件事：执法预算，然后发射 `model_requested`。
+     * 把这次 Run 的账目写进日志。
+     *
+     * 它在**每一条终态路径上**都要被调用一次（收工、失败、取消、被遗弃），
+     * 因为"这次花了多少"是 trace 的三个必答问题之一（SKILL 的 Trace 一节），
+     * 而一次失败的 Run 恰恰是最想知道花了多少的那一次。
+     *
+     * 顺序是它排在终态事件**之前**：`usage_reported` 是账目，不是终态——
+     * 回放的状态机把它标成"不影响状态"（步 7 那张表），所以排在前面不会
+     * 影响终态判定，同时让"钱花了多少"先于"为什么停"出现。
+     */
+    const emitUsage = async (): Promise<void> => {
+      // 幂等：一次 Run 里 `usage_reported` 恰好一条。没有这个闸门，一条 success 路径
+      // 之后如果终态事件本身写失败，`catch` 会让 `emitStop` 再报一次账——
+      // 于是同一笔花费在 trace 里出现两遍，而"花了多少"这个问题的答案不该取决于
+      // 日志坏在哪一步。
+      if (usageEmitted) return;
+      usageEmitted = true;
+      const usage = usageOf(ledger);
+      await emit("usage_reported", {
+        usage: {
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          toolCalls: guard.spent().toolCalls,
+          durationMs: clock() - runStartedAt,
+          model: modelName,
+        },
+      });
+    };
+
+    /**
+     * 模型端口外面包的一层，做三件事：执法预算、发射 `model_requested`、按政策重试。
      *
      * 为什么不让循环在决策之后补记一条 `model_requested`：事件的顺序与时间戳必须是
      * **真的**。「请求已发出」发生在真正发起请求的那一刻，不是事后回忆。包一层端口是
      * 唯一能做到这件事的位置——步 3 的文档预言了它，步 5 的预算记账果然落到了同一处。
      *
      * 预算检查在 `model_requested` **之前**：没有发出去的请求不该在日志里留下一条
-     * 说自己发过的事件。
+     * 说自己发过的事件。注意预算检查在**重试循环之外**——它是"每一轮"的执法，
+     * 不是"每一次尝试"的：把 `beforeModel` 放进循环里会让第二次尝试对着同一份状态
+     * 再判一次"这一轮有没有前进"，于是每一次重试都会被误判成空转。
+     *
+     * 重试在循环之内，而且**每一次尝试都发一条 `model_requested`**：重试是真实的
+     * 第二次请求，日志里必须看得见，否则"这次 Run 花了多少"会被少算。
      */
     const guardedModel: ModelPort = {
       async decide(modelState: AgentState, modelSignal: AbortSignal) {
-        guard.beforeModel(modelState);
-        await emit("model_requested", { model: modelName });
-        // 落日志、送事件这两个 await 之间取消一次的话，本来会有一条请求被发出去。
-        guard.assertNotCancelled("模型调用");
-        return innerModel.decide(modelState, modelSignal);
+        guard.beforeModel(modelState, usageOf(ledger));
+
+        let failedAttempts = 0;
+        for (;;) {
+          await emit("model_requested", { model: modelName });
+          // 落日志、送事件这两个 await 之间取消一次的话，本来会有一条请求被发出去。
+          guard.assertNotCancelled("模型调用");
+          try {
+            return await innerModel.decide(modelState, modelSignal);
+          } catch (error) {
+            const code = toRunError(error).code;
+            // 我们自己喊的停永不重试：`cause()` 有值说明是外部取消或墙钟，
+            // 那不是 provider 的问题，重发只是不听话。
+            if (runSignal.cause() !== null) throw error;
+            if (!shouldRetry(code, failedAttempts + 1, retry)) throw error;
+            failedAttempts += 1;
+            await sleep(retryDelayMs(failedAttempts - 1, retry), runSignal.signal);
+          }
+        }
       },
     };
 
@@ -384,7 +506,7 @@ export function createRuntime(options: RunAgentOptions): AgentRuntime {
     const deps: LoopDeps = { model: guardedModel, tools: guardedTools, assembleObservation };
 
     try {
-      await emit("run_started", {});
+      runStartedAt = (await emit("run_started", {})).timestamp;
       yield* deliver();
 
       // 这里就是步 3 说好的消费方式：`observation === null` 区分「意图」与「结果」
@@ -445,9 +567,11 @@ export function createRuntime(options: RunAgentOptions): AgentRuntime {
       // 若落事件本身失败（日志坏了），异常原样逃出去，`finally` 不需要、也不该
       // 再补一条——补了会把「日志坏了」这件事盖掉。
       if (state.pendingQuestion !== null) {
+        await emitUsage();
         settled = true;
         await emit("human_input_requested", { question: state.pendingQuestion });
       } else if (lastTerminal !== null && lastTerminal.kind === "respond") {
+        await emitUsage();
         settled = true;
         const missingMaterial = collectMissingMaterial(state);
         await emit("run_completed", {
@@ -478,6 +602,9 @@ export function createRuntime(options: RunAgentOptions): AgentRuntime {
         // 含义本来就相同：**这次 Run 不会再做任何事。** 区别只有一个——这一条
         // 写得下，但没人看得见（消费者已经走了）。日志是唯一真相，真相要收尾；
         // 事件流是它的投影，投影停在消费者离场的那一刻。
+        //
+        // 账目同样要补：钱是在消费者离场**之前**花掉的，它不该因为没人看就消失。
+        await emitUsage();
         await emit("run_cancelled", {});
       }
     }
