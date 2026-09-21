@@ -11,6 +11,10 @@ declare global {
         | { success: true; data: import("../../shared/ipc-contract").IpcChannelMap[K]["return"] }
         | { success: false; error: string }
       >;
+      on<K extends keyof import("../../shared/ipc-contract").IpcEventMap>(
+        channel: K,
+        callback: (payload: import("../../shared/ipc-contract").IpcEventMap[K]) => void,
+      ): () => void;
     };
   }
 }
