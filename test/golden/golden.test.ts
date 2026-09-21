@@ -47,6 +47,7 @@ import {
   driveCore,
   driveSdk,
   lastRequest,
+  maskProviderTokens,
   maskRepo,
   stableJson,
   withFixture,
@@ -94,7 +95,7 @@ async function checkPinned(
   value: unknown,
   repoRoot: string,
 ): Promise<void> {
-  const text = stableJson(maskRepo(value, repoRoot));
+  const text = stableJson(maskProviderTokens(maskRepo(value, repoRoot)));
   const file = pinnedPath(c.name, kind);
   if (RECORD) {
     await mkdir(PINNED, { recursive: true });
@@ -131,6 +132,20 @@ describe("golden：每一条语料", () => {
         await checkPinned(c, "events", sdk.events, repoRoot);
         await checkPinned(c, "trace", sdk.trace, repoRoot);
         await checkPinned(c, "request", lastRequest(sdk), repoRoot);
+
+        // ①′ 用量的**形状**在固定件之外单独看着：固定件里 token 数被抹成
+        //    "<provider>"（faux 按文本长度算数，请求文本带着平台相关的绝对路径，
+        //    这个数跨平台钉不住——CI 实测），但「报了账」必须成立：字段要么是
+        //    有限的非负数、要么是明确的 null（两种都诚实：失败请求的产出就是
+        //    零，05 号语料报的就是 0；「没有账」才是 null）。**不许缺失**——
+        //    缺了字段说明有人没有报账。
+        const reported = sdk.events.find((event) => event.type === "usage_reported");
+        expect(reported, `${c.name} 应当上报用量`).toBeDefined();
+        const usage = (reported as { readonly usage: { readonly inputTokens: unknown; readonly outputTokens: unknown } }).usage;
+        const honest = (value: unknown): boolean =>
+          value === null || (typeof value === "number" && Number.isFinite(value) && value >= 0);
+        expect(honest(usage.inputTokens), "inputTokens 是非负数或 null").toBe(true);
+        expect(honest(usage.outputTokens), "outputTokens 是非负数或 null").toBe(true);
 
         // ② 确定性：同一条路跑两遍必须逐字节相同。它防的是隐藏的不确定性
         //    （遍历顺序、`Date.now` 泄漏、Map 迭代顺序）——那些东西会让上面两条

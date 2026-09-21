@@ -42,8 +42,8 @@
     "message": "已经发起 2 次工具调用，工具预算 2 用完（这一次要调的是 list_dir，它没有被执行）"
   },
   "usage": {
-    "inputTokens": 2013,
-    "outputTokens": 19,
+    "inputTokens": "<provider>",
+    "outputTokens": "<provider>",
     "toolCalls": 2,
     "durationMs": 0,
     "model": "golden-model"

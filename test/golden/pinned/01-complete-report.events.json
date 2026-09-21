@@ -351,8 +351,8 @@
   },
   {
     "usage": {
-      "inputTokens": 2948,
-      "outputTokens": 89,
+      "inputTokens": "<provider>",
+      "outputTokens": "<provider>",
       "toolCalls": 3,
       "durationMs": 0,
       "model": "golden-model"

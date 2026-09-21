@@ -15,8 +15,10 @@
  * 1. **provider 报的 token 数。** 真流里的 `usage` 是 provider 自己算的
  *    （`fauxAssistantMessage` 按文本长度给数），而假模型端口根本没有账本，
  *    两项是 `null`。这不是语义差异，是"谁有能力知道"的差异：
- *    所以等价性比较里这两项被换成 `"<provider>"`，而**它们真实的数字仍然被
- *    固定件钉住**（`pinned/*.events.json` 是 SDK 路产出的，里面是真实的数字）。
+ *    所以等价性比较里这两项被换成 `"<provider>"`，**固定件里同样如此**——
+ *    faux 的数字按文本长度算，而请求文本带着夹具的绝对路径，Windows 与 Linux
+ *    的路径长度不同，同一个语义会算出不同的数（CI 实测撞到）。「报了账」
+ *    由 golden.test.ts 的形状断言看着：`usage_reported` 必须存在且是真实数字。
  * 2. **夹具的绝对路径。** 夹具写在临时目录里，路径每次不同。固定件里它被换成
  *    `<repo>`，替换是**前缀式**的——别的绝对路径要是漏进来，照样看得见。
  *
@@ -424,6 +426,34 @@ export function comparable(events: readonly AgentEvent[]): readonly unknown[] {
       usage: { ...event.usage, inputTokens: "<provider>", outputTokens: "<provider>" },
     };
   });
+}
+
+/**
+ * 固定件用的形态：把 token 数换成占位符（深度遍历，事件与 trace 通吃）。
+ *
+ * 固定件原本钉着 provider 报的**真实**数字——这在单一平台上成立，CI 撞破了它：
+ * faux 的用量按文本长度算，而请求文本里带着夹具的绝对路径，Windows 的
+ * `C:\Users\...` 与 Linux 的 `/tmp/...` 长度不同，于是同一个语义在两个平台上
+ * 算出不同的 token 数。结论：token 数混着平台差异，不是纯语义，固定件里
+ * 只能钉「报了账」（形状断言在 golden.test.ts 里），钉不了这个数。
+ */
+export function maskProviderTokens<T>(value: T): T {
+  const walk = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(walk);
+    if (node !== null && typeof node === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [key, inner] of Object.entries(node as Record<string, unknown>)) {
+        if ((key === "inputTokens" || key === "outputTokens") && typeof inner === "number") {
+          out[key] = "<provider>";
+        } else {
+          out[key] = walk(inner);
+        }
+      }
+      return out;
+    }
+    return node;
+  };
+  return walk(value) as T;
 }
 
 /** 日志里的工具调用顺序，压成一行行 `工具名(参数)`。给人读，也给"少了哪一步"用。 */

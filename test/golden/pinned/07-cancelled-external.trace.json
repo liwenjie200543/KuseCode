@@ -42,8 +42,8 @@
     "kind": "cancelled"
   },
   "usage": {
-    "inputTokens": 1281,
-    "outputTokens": 20,
+    "inputTokens": "<provider>",
+    "outputTokens": "<provider>",
     "toolCalls": 2,
     "durationMs": 0,
     "model": "golden-model"
