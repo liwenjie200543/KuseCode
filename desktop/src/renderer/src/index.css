@@ -42,6 +42,116 @@ h1 {
   margin: 0 0 8px;
 }
 
+textarea,
+input,
+select {
+  font: inherit;
+  padding: 6px 10px;
+  border: 1px solid #c9cdd4;
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+}
+
+textarea {
+  width: 100%;
+  resize: vertical;
+  margin-bottom: 10px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.grow {
+  flex: 1;
+  min-width: 200px;
+}
+
+button {
+  font: inherit;
+  padding: 7px 16px;
+  border: none;
+  border-radius: 6px;
+  background: #2456d6;
+  color: #fff;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.danger {
+  background: #c62828;
+}
+
+.meta {
+  color: #65676b;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.stream {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stream li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 8px;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
+.stream .seq {
+  color: #9aa0a6;
+  font-size: 12px;
+  min-width: 24px;
+  text-align: right;
+}
+
+.stream .type {
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  color: #5f6368;
+  min-width: 150px;
+}
+
+.tone-info { background: #eef2fb; }
+.tone-tool { background: #f3edfb; }
+.tone-ok { background: #e8f5ec; color: #1a7f37; }
+.tone-warn { background: #fdf3e0; color: #9a6b00; }
+.tone-error { background: #fdecea; color: #c62828; }
+.tone-human { background: #e8f4f8; color: #0b6e8f; }
+
+@media (prefers-color-scheme: dark) {
+  textarea, input, select {
+    background: #1d1f24;
+    border-color: #3a3d44;
+  }
+  .stream .type { color: #9aa0a6; }
+  .tone-info { background: #232c44; }
+  .tone-tool { background: #2c2540; }
+  .tone-ok { background: #1d3325; color: #6fd08c; }
+  .tone-warn { background: #3a301a; color: #e0b45c; }
+  .tone-error { background: #3d211f; color: #f28b82; }
+  .tone-human { background: #16323e; color: #6cc3e0; }
+  button { background: #4b79ee; }
+}
+
 .ok {
   color: #1a7f37;
 }
