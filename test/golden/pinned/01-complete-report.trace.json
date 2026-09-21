@@ -1,0 +1,97 @@
+{
+  "runId": "golden-run-1",
+  "status": "completed",
+  "startedAt": 1700000000000,
+  "endedAt": 1700000000000,
+  "eventCount": 20,
+  "steps": [
+    {
+      "index": 1,
+      "round": 1,
+      "toolCallId": "golden-tool-1",
+      "tool": "list_dir",
+      "args": {
+        "path": "."
+      },
+      "status": "success",
+      "errorCode": null,
+      "errorMessage": null,
+      "truncated": false,
+      "startedAt": 1700000000000,
+      "durationMs": 0
+    },
+    {
+      "index": 2,
+      "round": 2,
+      "toolCallId": "golden-tool-2",
+      "tool": "search_text",
+      "args": {
+        "pattern": "TODO",
+        "maxMatches": 5
+      },
+      "status": "success",
+      "errorCode": null,
+      "errorMessage": null,
+      "truncated": false,
+      "startedAt": 1700000000000,
+      "durationMs": 0
+    },
+    {
+      "index": 3,
+      "round": 3,
+      "toolCallId": "golden-tool-3",
+      "tool": "read_file",
+      "args": {
+        "path": "README.md",
+        "startLine": 1,
+        "endLine": 5
+      },
+      "status": "success",
+      "errorCode": null,
+      "errorMessage": null,
+      "truncated": false,
+      "startedAt": 1700000000000,
+      "durationMs": 0
+    }
+  ],
+  "stop": {
+    "kind": "completed",
+    "status": "complete",
+    "missingMaterial": []
+  },
+  "usage": {
+    "inputTokens": 2948,
+    "outputTokens": 89,
+    "toolCalls": 3,
+    "durationMs": 0,
+    "model": "golden-model"
+  },
+  "report": {
+    "summary": "仓库里还有两处 TODO，其中一处是归档开关。",
+    "claims": [
+      {
+        "text": "README 的第 5 行记着归档开关还没接上。",
+        "evidence": [
+          {
+            "path": "README.md",
+            "lines": [
+              5,
+              5
+            ],
+            "excerpt": "TODO: 把归档开关接上（见 src/app.ts）。",
+            "provenance": {
+              "source": "model",
+              "at": 1700000000000
+            }
+          }
+        ]
+      },
+      {
+        "text": "归档功能上线后没有回滚方案。",
+        "evidence": []
+      }
+    ]
+  },
+  "question": null,
+  "model": "golden-model"
+}

@@ -1,0 +1,54 @@
+{
+  "runId": "golden-run-1",
+  "status": "failed",
+  "startedAt": 1700000000000,
+  "endedAt": 1700000000000,
+  "eventCount": 15,
+  "steps": [
+    {
+      "index": 1,
+      "round": 1,
+      "toolCallId": "golden-tool-1",
+      "tool": "list_dir",
+      "args": {
+        "path": "."
+      },
+      "status": "success",
+      "errorCode": null,
+      "errorMessage": null,
+      "truncated": false,
+      "startedAt": 1700000000000,
+      "durationMs": 0
+    },
+    {
+      "index": 2,
+      "round": 2,
+      "toolCallId": "golden-tool-2",
+      "tool": "list_dir",
+      "args": {
+        "path": "src"
+      },
+      "status": "success",
+      "errorCode": null,
+      "errorMessage": null,
+      "truncated": false,
+      "startedAt": 1700000000000,
+      "durationMs": 0
+    }
+  ],
+  "stop": {
+    "kind": "failed",
+    "code": "budget_tools",
+    "message": "已经发起 2 次工具调用，工具预算 2 用完（这一次要调的是 list_dir，它没有被执行）"
+  },
+  "usage": {
+    "inputTokens": 2013,
+    "outputTokens": 19,
+    "toolCalls": 2,
+    "durationMs": 0,
+    "model": "golden-model"
+  },
+  "report": null,
+  "question": null,
+  "model": "golden-model"
+}

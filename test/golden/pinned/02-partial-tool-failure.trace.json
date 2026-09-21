@@ -1,0 +1,51 @@
+{
+  "runId": "golden-run-1",
+  "status": "completed",
+  "startedAt": 1700000000000,
+  "endedAt": 1700000000000,
+  "eventCount": 10,
+  "steps": [
+    {
+      "index": 1,
+      "round": 1,
+      "toolCallId": "golden-tool-1",
+      "tool": "read_file",
+      "args": {
+        "path": "../outside.txt",
+        "startLine": 1,
+        "endLine": 5
+      },
+      "status": "error",
+      "errorCode": "invalid_args",
+      "errorMessage": "路径越出了仓库根目录：../outside.txt",
+      "truncated": false,
+      "startedAt": 1700000000000,
+      "durationMs": 0
+    }
+  ],
+  "stop": {
+    "kind": "completed",
+    "status": "partial",
+    "missingMaterial": [
+      "read_file({\"path\":\"../outside.txt\",\"startLine\":1,\"endLine\":5})：invalid_args——路径越出了仓库根目录：../outside.txt"
+    ]
+  },
+  "usage": {
+    "inputTokens": 1243,
+    "outputTokens": 38,
+    "toolCalls": 1,
+    "durationMs": 0,
+    "model": "golden-model"
+  },
+  "report": {
+    "summary": "没能读到仓库外的那个文件。",
+    "claims": [
+      {
+        "text": "仓库外的内容不可得。",
+        "evidence": []
+      }
+    ]
+  },
+  "question": null,
+  "model": "golden-model"
+}

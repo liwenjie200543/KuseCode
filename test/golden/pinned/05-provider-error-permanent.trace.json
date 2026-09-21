@@ -1,0 +1,23 @@
+{
+  "runId": "golden-run-1",
+  "status": "failed",
+  "startedAt": 1700000000000,
+  "endedAt": 1700000000000,
+  "eventCount": 4,
+  "steps": [],
+  "stop": {
+    "kind": "failed",
+    "code": "auth",
+    "message": "401 Unauthorized: invalid api key"
+  },
+  "usage": {
+    "inputTokens": 602,
+    "outputTokens": 0,
+    "toolCalls": 0,
+    "durationMs": 0,
+    "model": "golden-model"
+  },
+  "report": null,
+  "question": null,
+  "model": "golden-model"
+}

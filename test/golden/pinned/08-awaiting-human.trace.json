@@ -1,0 +1,38 @@
+{
+  "runId": "golden-run-1",
+  "status": "awaiting_human",
+  "startedAt": 1700000000000,
+  "endedAt": 1700000000000,
+  "eventCount": 10,
+  "steps": [
+    {
+      "index": 1,
+      "round": 1,
+      "toolCallId": "golden-tool-1",
+      "tool": "list_dir",
+      "args": {
+        "path": "."
+      },
+      "status": "success",
+      "errorCode": null,
+      "errorMessage": null,
+      "truncated": false,
+      "startedAt": 1700000000000,
+      "durationMs": 0
+    }
+  ],
+  "stop": {
+    "kind": "awaiting_human",
+    "question": "这个仓库的验收标准是什么？"
+  },
+  "usage": {
+    "inputTokens": 1281,
+    "outputTokens": 16,
+    "toolCalls": 1,
+    "durationMs": 0,
+    "model": "golden-model"
+  },
+  "report": null,
+  "question": "这个仓库的验收标准是什么？",
+  "model": "golden-model"
+}

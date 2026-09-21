@@ -61,34 +61,28 @@ Each step is one commit and proves one first-principles claim.
 
 ## Status
 
-Step 9 done. There is a product surface now: `kuse run` starts a Run and prints what it called,
-why it stopped and what it cost; `kuse trace` / `kuse runs` / `kuse sessions` re-read a finished
-Run from its log without re-running anything or loading the SDK. The exit code **is** the answer
-to "why did it stop" in machine-readable form — `0/10/11/12/13` are "the Run happened but did not
-finish" (complete / partial / failed / cancelled / awaiting a human), while `2/3` are "the Run never
-started" — so a script can tell "retry will help" from "fix the arguments first".
+All ten steps done. Step 9 gave the project a product surface (`kuse run` / `trace` / `runs` /
+`sessions`, exit codes as machine-readable "why did it stop", evidence audit, two-directional
+secret handling — see `docs/09-cli-trace.md`). Step 10 closed the loop with **golden transcripts**:
+eight pinned runs cover every ending (complete / two kinds of partial / failed / cancelled /
+awaiting a human); each is driven through two independent paths — the fake model port (no SDK)
+and the real `pi-ai` stream through the adapter — and the two event logs must match byte for byte,
+while the SDK-path artifacts are pinned on disk (`test/golden/pinned/`). An SDK upgrade that
+silently changes semantics now fails a test instead of shipping. Recording is explicit
+(`KUSE_RECORD_GOLDEN=1`) because a golden file is a *reviewed assertion*, not a cache.
+The corpus forced one real fix: `search_text` traversal order used to depend on the filesystem;
+it is now sorted, and the order is pinned like any other behavior.
 
-The step's real work is that `README`'s opening sentence became **executable**. Until now
-"every claim points at evidence" was only *demanded* (a system prompt asked the model to do it);
-now `auditRun` checks it: every cited path and line range is tested for **containment** in what the
-tools actually returned, and a claim with no evidence is printed rather than omitted. What it does
-not check is whether the claim is *true* — that needs another model. It checks whether the lines were
-ever *seen*, which is the part that can be decided with certainty.
-
-Two things were found by running it rather than by reasoning about it. First, a truncated
-`search_text` result made the checker accuse a valid citation of "never seen" — truncation *replaces*
-the value, so the structure is gone and "cannot extract" is not "did not see"; the audit now
-degrades its own wording (and its `conclusive` flag) instead of making a false accusation. Second,
-the default layout puts the store **inside** the repository, so a search hit the Run's own event log
-— the report's first piece of evidence was its own `events.jsonl`. The CLI now computes whether the
-store is inside the repo and tells the tools to skip that path (by path, not by directory name: a
-real `runs/` directory of source would otherwise be silently dropped). Credentials are handled in
-two opposite directions — ours are scrubbed before they reach output or the log; a secret written in
-the analyzed repository is **kept**, because it is the evidence.
+Steps 1–9 in brief: domain types with no imports; a minimal loop that is the only state machine;
+an append-only event log with write-ahead emission; budgets and cancellation checked *before*
+each action; a tool execution layer with eight gates around untrusted output; durable logs and
+idempotent replay; the Pi Agent SDK living only behind ports (deleting the adapter still
+compiles and runs); and a CLI that answers what / why / how much from the log alone.
 
 Per-step reasoning lives in `docs/02-core-contracts.md`, `docs/03-core-loop.md`,
 `docs/04-run-events.md`, `docs/05-budget-cancellation.md`, `docs/06-tool-execution.md`,
-`docs/07-durability-replay.md`, `docs/08-pi-adapter.md` and `docs/09-cli-trace.md`.
+`docs/07-durability-replay.md`, `docs/08-pi-adapter.md`, `docs/09-cli-trace.md` and
+`docs/10-golden-transcripts.md`.
 
 ## Commands
 

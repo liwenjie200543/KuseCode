@@ -1,0 +1,38 @@
+[
+  {
+    "runId": "golden-run-1",
+    "sequence": 0,
+    "timestamp": 1700000000000,
+    "type": "run_started"
+  },
+  {
+    "model": "golden-model",
+    "runId": "golden-run-1",
+    "sequence": 1,
+    "timestamp": 1700000000000,
+    "type": "model_requested"
+  },
+  {
+    "usage": {
+      "inputTokens": 602,
+      "outputTokens": 0,
+      "toolCalls": 0,
+      "durationMs": 0,
+      "model": "golden-model"
+    },
+    "runId": "golden-run-1",
+    "sequence": 2,
+    "timestamp": 1700000000000,
+    "type": "usage_reported"
+  },
+  {
+    "error": {
+      "code": "auth",
+      "message": "401 Unauthorized: invalid api key"
+    },
+    "runId": "golden-run-1",
+    "sequence": 3,
+    "timestamp": 1700000000000,
+    "type": "run_failed"
+  }
+]

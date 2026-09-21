@@ -1,0 +1,54 @@
+{
+  "runId": "golden-run-1",
+  "status": "cancelled",
+  "startedAt": 1700000000000,
+  "endedAt": 1700000000000,
+  "eventCount": 13,
+  "steps": [
+    {
+      "index": 1,
+      "round": 1,
+      "toolCallId": "golden-tool-1",
+      "tool": "list_dir",
+      "args": {
+        "path": "."
+      },
+      "status": "success",
+      "errorCode": null,
+      "errorMessage": null,
+      "truncated": false,
+      "startedAt": 1700000000000,
+      "durationMs": 0
+    },
+    {
+      "index": 2,
+      "round": 2,
+      "toolCallId": "golden-tool-2",
+      "tool": "read_file",
+      "args": {
+        "path": "README.md",
+        "startLine": 1,
+        "endLine": 5
+      },
+      "status": "error",
+      "errorCode": "tool_failed",
+      "errorMessage": "调用已被取消，工具没有执行",
+      "truncated": false,
+      "startedAt": 1700000000000,
+      "durationMs": 0
+    }
+  ],
+  "stop": {
+    "kind": "cancelled"
+  },
+  "usage": {
+    "inputTokens": 1281,
+    "outputTokens": 20,
+    "toolCalls": 2,
+    "durationMs": 0,
+    "model": "golden-model"
+  },
+  "report": null,
+  "question": null,
+  "model": "golden-model"
+}

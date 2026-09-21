@@ -1,0 +1,228 @@
+{
+  "systemPrompt": "你在一个 Agent 循环里工作：每一步要么读取材料，要么交付结论。\n你可以调用工具去读仓库内容；工具的真实性由运行时校验，不要臆造工具名。\n禁止凭记忆回答仓库里的内容——凡是你没有从工具结果里看到的，都不要写进结论。\n当你掌握的材料足够回答目标时，调用 submit_report 交付结论。\nsubmit_report 的每一条 claim 都要在 evidence 里给出文件路径与行号；\n确实没有找到依据的结论也要写出来，把 evidence 留成空数组，不要为了让结论好看而省略它。\n当你无法通过读取仓库得出结论、且只有人才能提供所需信息时，调用 ask_human。",
+  "messages": [
+    {
+      "role": "user",
+      "content": "目标：这个仓库的验收标准是什么？\n\n仓库根目录：<repo:demo>\n\n必须覆盖的检查维度：\n- 需要人回答的问题",
+      "timestamp": 0
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_0",
+          "name": "list_dir",
+          "arguments": {
+            "path": "."
+          }
+        }
+      ],
+      "api": "golden",
+      "provider": "golden",
+      "model": "golden-model",
+      "usage": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 0
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_0",
+      "toolName": "list_dir",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"path\": \".\",\n  \"entries\": [\n    {\n      \"name\": \"notes\",\n      \"type\": \"dir\"\n    },\n    {\n      \"name\": \"README.md\",\n      \"type\": \"file\"\n    },\n    {\n      \"name\": \"src\",\n      \"type\": \"dir\"\n    }\n  ],\n  \"total\": 3,\n  \"omitted\": 0\n}"
+        }
+      ],
+      "details": {
+        "path": ".",
+        "entries": [
+          {
+            "name": "notes",
+            "type": "dir"
+          },
+          {
+            "name": "README.md",
+            "type": "file"
+          },
+          {
+            "name": "src",
+            "type": "dir"
+          }
+        ],
+        "total": 3,
+        "omitted": 0
+      },
+      "isError": false,
+      "timestamp": 0
+    }
+  ],
+  "tools": [
+    {
+      "name": "read_file",
+      "description": "读取仓库里一个文本文件的内容，按行返回并带行号。用行号引用证据。大文件请用 startLine/endLine 取窗口。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "文件路径，相对于仓库根目录"
+          },
+          "startLine": {
+            "type": "integer",
+            "description": "起始行号（从 1 开始，含）"
+          },
+          "endLine": {
+            "type": "integer",
+            "description": "结束行号（含）"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_dir",
+      "description": "列出仓库里一个目录的条目（名字与类型）。不递归。默认列出仓库根目录。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "目录路径，相对于仓库根目录；省略即根目录"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_text",
+      "description": "在仓库的文本文件里按正则搜索，返回命中行（带文件路径与行号）。用来定位材料，而不是代替阅读。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "description": "JavaScript 正则表达式（不区分大小写）"
+          },
+          "maxMatches": {
+            "type": "integer",
+            "description": "最多返回多少条命中，默认 100"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "submit_report",
+      "description": "交付最终结论。summary 是摘要；每条结论都写进 claims，并在 evidence 里给出文件路径与行号。没有找到依据的结论也要写出来，把 evidence 留空数组——不要为了好看而省略它。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string",
+            "description": "回答的摘要"
+          },
+          "claims": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "text"
+              ],
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "description": "一条论断"
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "path"
+                    ],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "description": "文件路径，相对仓库根目录"
+                      },
+                      "lines": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "additionalItems": false,
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ],
+                            "minItems": 2
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "行号区间 [起, 止]（含两端）；整文件级证据写 null"
+                      },
+                      "excerpt": {
+                        "type": "string",
+                        "description": "被引用的原文片段"
+                      }
+                    }
+                  },
+                  "description": "支撑这条论断的证据；没有就写空数组"
+                }
+              }
+            },
+            "description": "逐条结论，每条都指向证据"
+          }
+        },
+        "required": [
+          "summary"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "ask_human",
+      "description": "当且仅当你无法通过读取仓库得出结论、且只有人才能回答时使用。附上你需要的具体信息。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "只有人才能回答的问题"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

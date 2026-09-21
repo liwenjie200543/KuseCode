@@ -1,0 +1,399 @@
+[
+  {
+    "runId": "golden-run-1",
+    "sequence": 0,
+    "timestamp": 1700000000000,
+    "type": "run_started"
+  },
+  {
+    "model": "golden-model",
+    "runId": "golden-run-1",
+    "sequence": 1,
+    "timestamp": 1700000000000,
+    "type": "model_requested"
+  },
+  {
+    "decision": {
+      "kind": "call_tool",
+      "intent": {
+        "name": "list_dir",
+        "args": {
+          "path": "."
+        }
+      }
+    },
+    "runId": "golden-run-1",
+    "sequence": 2,
+    "timestamp": 1700000000000,
+    "type": "decision_made"
+  },
+  {
+    "toolCallId": "golden-tool-1",
+    "toolName": "list_dir",
+    "runId": "golden-run-1",
+    "sequence": 3,
+    "timestamp": 1700000000000,
+    "type": "tool_started"
+  },
+  {
+    "toolCallId": "golden-tool-1",
+    "toolName": "list_dir",
+    "status": "success",
+    "result": {
+      "path": ".",
+      "entries": [
+        {
+          "name": "notes",
+          "type": "dir"
+        },
+        {
+          "name": "README.md",
+          "type": "file"
+        },
+        {
+          "name": "src",
+          "type": "dir"
+        }
+      ],
+      "total": 3,
+      "omitted": 0
+    },
+    "error": null,
+    "durationMs": 0,
+    "runId": "golden-run-1",
+    "sequence": 4,
+    "timestamp": 1700000000000,
+    "type": "tool_completed"
+  },
+  {
+    "name": "list_dir",
+    "observation": {
+      "tool": "list_dir",
+      "value": {
+        "path": ".",
+        "entries": [
+          {
+            "name": "notes",
+            "type": "dir"
+          },
+          {
+            "name": "README.md",
+            "type": "file"
+          },
+          {
+            "name": "src",
+            "type": "dir"
+          }
+        ],
+        "total": 3,
+        "omitted": 0
+      },
+      "error": null,
+      "truncated": false,
+      "provenance": {
+        "source": "list_dir",
+        "at": 1700000000000
+      }
+    },
+    "runId": "golden-run-1",
+    "sequence": 5,
+    "timestamp": 1700000000000,
+    "type": "observation_added"
+  },
+  {
+    "model": "golden-model",
+    "runId": "golden-run-1",
+    "sequence": 6,
+    "timestamp": 1700000000000,
+    "type": "model_requested"
+  },
+  {
+    "decision": {
+      "kind": "call_tool",
+      "intent": {
+        "name": "search_text",
+        "args": {
+          "pattern": "TODO",
+          "maxMatches": 5
+        }
+      }
+    },
+    "runId": "golden-run-1",
+    "sequence": 7,
+    "timestamp": 1700000000000,
+    "type": "decision_made"
+  },
+  {
+    "toolCallId": "golden-tool-2",
+    "toolName": "search_text",
+    "runId": "golden-run-1",
+    "sequence": 8,
+    "timestamp": 1700000000000,
+    "type": "tool_started"
+  },
+  {
+    "toolCallId": "golden-tool-2",
+    "toolName": "search_text",
+    "status": "success",
+    "result": {
+      "pattern": "TODO",
+      "matches": [
+        {
+          "path": "README.md",
+          "line": 5,
+          "text": "TODO: 把归档开关接上（见 src/app.ts）。"
+        },
+        {
+          "path": "src/app.ts",
+          "line": 5,
+          "text": "// TODO: 归档开关还没有接进来。"
+        }
+      ],
+      "scannedFiles": 4,
+      "stoppedEarly": false
+    },
+    "error": null,
+    "durationMs": 0,
+    "runId": "golden-run-1",
+    "sequence": 9,
+    "timestamp": 1700000000000,
+    "type": "tool_completed"
+  },
+  {
+    "name": "search_text",
+    "observation": {
+      "tool": "search_text",
+      "value": {
+        "pattern": "TODO",
+        "matches": [
+          {
+            "path": "README.md",
+            "line": 5,
+            "text": "TODO: 把归档开关接上（见 src/app.ts）。"
+          },
+          {
+            "path": "src/app.ts",
+            "line": 5,
+            "text": "// TODO: 归档开关还没有接进来。"
+          }
+        ],
+        "scannedFiles": 4,
+        "stoppedEarly": false
+      },
+      "error": null,
+      "truncated": false,
+      "provenance": {
+        "source": "search_text",
+        "at": 1700000000000
+      }
+    },
+    "runId": "golden-run-1",
+    "sequence": 10,
+    "timestamp": 1700000000000,
+    "type": "observation_added"
+  },
+  {
+    "model": "golden-model",
+    "runId": "golden-run-1",
+    "sequence": 11,
+    "timestamp": 1700000000000,
+    "type": "model_requested"
+  },
+  {
+    "decision": {
+      "kind": "call_tool",
+      "intent": {
+        "name": "read_file",
+        "args": {
+          "path": "README.md",
+          "startLine": 1,
+          "endLine": 5
+        }
+      }
+    },
+    "runId": "golden-run-1",
+    "sequence": 12,
+    "timestamp": 1700000000000,
+    "type": "decision_made"
+  },
+  {
+    "toolCallId": "golden-tool-3",
+    "toolName": "read_file",
+    "runId": "golden-run-1",
+    "sequence": 13,
+    "timestamp": 1700000000000,
+    "type": "tool_started"
+  },
+  {
+    "toolCallId": "golden-tool-3",
+    "toolName": "read_file",
+    "status": "success",
+    "result": {
+      "path": "README.md",
+      "startLine": 1,
+      "endLine": 5,
+      "totalLines": 5,
+      "lines": [
+        {
+          "n": 1,
+          "text": "# 演示仓库"
+        },
+        {
+          "n": 2,
+          "text": ""
+        },
+        {
+          "n": 3,
+          "text": "这个夹具是 golden 语料的材料，不是这个项目的一部分。"
+        },
+        {
+          "n": 4,
+          "text": ""
+        },
+        {
+          "n": 5,
+          "text": "TODO: 把归档开关接上（见 src/app.ts）。"
+        }
+      ]
+    },
+    "error": null,
+    "durationMs": 0,
+    "runId": "golden-run-1",
+    "sequence": 14,
+    "timestamp": 1700000000000,
+    "type": "tool_completed"
+  },
+  {
+    "name": "read_file",
+    "observation": {
+      "tool": "read_file",
+      "value": {
+        "path": "README.md",
+        "startLine": 1,
+        "endLine": 5,
+        "totalLines": 5,
+        "lines": [
+          {
+            "n": 1,
+            "text": "# 演示仓库"
+          },
+          {
+            "n": 2,
+            "text": ""
+          },
+          {
+            "n": 3,
+            "text": "这个夹具是 golden 语料的材料，不是这个项目的一部分。"
+          },
+          {
+            "n": 4,
+            "text": ""
+          },
+          {
+            "n": 5,
+            "text": "TODO: 把归档开关接上（见 src/app.ts）。"
+          }
+        ]
+      },
+      "error": null,
+      "truncated": false,
+      "provenance": {
+        "source": "read_file",
+        "at": 1700000000000
+      }
+    },
+    "runId": "golden-run-1",
+    "sequence": 15,
+    "timestamp": 1700000000000,
+    "type": "observation_added"
+  },
+  {
+    "model": "golden-model",
+    "runId": "golden-run-1",
+    "sequence": 16,
+    "timestamp": 1700000000000,
+    "type": "model_requested"
+  },
+  {
+    "decision": {
+      "kind": "respond",
+      "report": {
+        "summary": "仓库里还有两处 TODO，其中一处是归档开关。",
+        "claims": [
+          {
+            "text": "README 的第 5 行记着归档开关还没接上。",
+            "evidence": [
+              {
+                "path": "README.md",
+                "lines": [
+                  5,
+                  5
+                ],
+                "excerpt": "TODO: 把归档开关接上（见 src/app.ts）。",
+                "provenance": {
+                  "source": "model",
+                  "at": 1700000000000
+                }
+              }
+            ]
+          },
+          {
+            "text": "归档功能上线后没有回滚方案。",
+            "evidence": []
+          }
+        ]
+      }
+    },
+    "runId": "golden-run-1",
+    "sequence": 17,
+    "timestamp": 1700000000000,
+    "type": "decision_made"
+  },
+  {
+    "usage": {
+      "inputTokens": 2948,
+      "outputTokens": 89,
+      "toolCalls": 3,
+      "durationMs": 0,
+      "model": "golden-model"
+    },
+    "runId": "golden-run-1",
+    "sequence": 18,
+    "timestamp": 1700000000000,
+    "type": "usage_reported"
+  },
+  {
+    "status": "complete",
+    "result": {
+      "summary": "仓库里还有两处 TODO，其中一处是归档开关。",
+      "claims": [
+        {
+          "text": "README 的第 5 行记着归档开关还没接上。",
+          "evidence": [
+            {
+              "path": "README.md",
+              "lines": [
+                5,
+                5
+              ],
+              "excerpt": "TODO: 把归档开关接上（见 src/app.ts）。",
+              "provenance": {
+                "source": "model",
+                "at": 1700000000000
+              }
+            }
+          ]
+        },
+        {
+          "text": "归档功能上线后没有回滚方案。",
+          "evidence": []
+        }
+      ]
+    },
+    "missingMaterial": [],
+    "runId": "golden-run-1",
+    "sequence": 19,
+    "timestamp": 1700000000000,
+    "type": "run_completed"
+  }
+]

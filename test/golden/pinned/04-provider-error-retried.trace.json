@@ -1,0 +1,57 @@
+{
+  "runId": "golden-run-1",
+  "status": "completed",
+  "startedAt": 1700000000000,
+  "endedAt": 1700000000000,
+  "eventCount": 11,
+  "steps": [
+    {
+      "index": 1,
+      "round": 1,
+      "toolCallId": "golden-tool-1",
+      "tool": "list_dir",
+      "args": {
+        "path": "."
+      },
+      "status": "success",
+      "errorCode": null,
+      "errorMessage": null,
+      "truncated": false,
+      "startedAt": 1700000000000,
+      "durationMs": 0
+    }
+  ],
+  "stop": {
+    "kind": "completed",
+    "status": "complete",
+    "missingMaterial": []
+  },
+  "usage": {
+    "inputTokens": 1882,
+    "outputTokens": 34,
+    "toolCalls": 1,
+    "durationMs": 0,
+    "model": "golden-model"
+  },
+  "report": {
+    "summary": "重试之后列了目录。",
+    "claims": [
+      {
+        "text": "仓库根目录有 README.md。",
+        "evidence": [
+          {
+            "path": "README.md",
+            "lines": null,
+            "excerpt": "",
+            "provenance": {
+              "source": "model",
+              "at": 1700000000000
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "question": null,
+  "model": "golden-model"
+}

@@ -387,6 +387,23 @@ const MAX_MATCHES = 100;
 const MAX_SCANNED_FILES = 2000;
 const MAX_PATTERN_LENGTH = 200;
 
+/**
+ * 遍历目录时的名字比较。
+ *
+ * **它必须与语言环境无关**，所以这里特意不用 `list_dir` 那个 `localeCompare`：
+ * 遍历顺序决定的不只是"命中按什么顺序排"，还有**哪几条命中会被 `maxMatches` 截掉**
+ * （见下面的 `stoppedEarly`）——一份材料的取舍取决于机器的 ICU 数据，
+ * 是"同一份输入产出同一份证据"这条约束承受不起的。
+ *
+ * 它是记录 golden 语料时暴露出来的：`readdir` 的顺序由文件系统决定，
+ * 于是同一份语料在两台机器上可能搜出不同的前 5 条。`list_dir` 的顺序只给人看，
+ * 宽松一点没有代价；这一条要进证据，必须钉死。
+ */
+function byName(a: { readonly name: string }, b: { readonly name: string }): number {
+  if (a.name === b.name) return 0;
+  return a.name < b.name ? -1 : 1;
+}
+
 const searchTextSpec: ToolSpec = {
   name: "search_text",
   description:
@@ -429,7 +446,7 @@ const searchTextSpec: ToolSpec = {
 
     const walk = async (directory: string): Promise<void> => {
       if (stopped) return;
-      const entries = await readdir(directory, { withFileTypes: true });
+      const entries = (await readdir(directory, { withFileTypes: true })).sort(byName);
       for (const entry of entries) {
         if (stopped) return;
         const child = join(directory, entry.name);

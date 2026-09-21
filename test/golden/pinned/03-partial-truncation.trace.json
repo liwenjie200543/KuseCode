@@ -1,0 +1,64 @@
+{
+  "runId": "golden-run-1",
+  "status": "completed",
+  "startedAt": 1700000000000,
+  "endedAt": 1700000000000,
+  "eventCount": 10,
+  "steps": [
+    {
+      "index": 1,
+      "round": 1,
+      "toolCallId": "golden-tool-1",
+      "tool": "read_file",
+      "args": {
+        "path": "src/big.ts",
+        "startLine": 1,
+        "endLine": 60
+      },
+      "status": "success",
+      "errorCode": null,
+      "errorMessage": null,
+      "truncated": true,
+      "startedAt": 1700000000000,
+      "durationMs": 0
+    }
+  ],
+  "stop": {
+    "kind": "completed",
+    "status": "partial",
+    "missingMaterial": [
+      "read_file({\"path\":\"src/big.ts\",\"startLine\":1,\"endLine\":60})：结果被截断（只保留了前 8000 个字符）"
+    ]
+  },
+  "usage": {
+    "inputTokens": 3237,
+    "outputTokens": 49,
+    "toolCalls": 1,
+    "durationMs": 0,
+    "model": "golden-model"
+  },
+  "report": {
+    "summary": "读到了那个文件，但只拿到一段预览。",
+    "claims": [
+      {
+        "text": "第 30 行是一个导出的常量。",
+        "evidence": [
+          {
+            "path": "src/big.ts",
+            "lines": [
+              30,
+              30
+            ],
+            "excerpt": "",
+            "provenance": {
+              "source": "model",
+              "at": 1700000000000
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "question": null,
+  "model": "golden-model"
+}
