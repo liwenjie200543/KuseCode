@@ -80,6 +80,11 @@ invoke 的请求-响应语义不该被一次长跑占住；事件与终态全部
   `--disable-gpu --in-process-gpu`。普通桌面环境不需要这些参数。
 - **preload 输出格式**：`"type": "module"` 会让 electron-vite 把 preload 编成 `.mjs`，
   而沙箱 preload 只支持 CJS。desktop 包去掉 `"type": "module"`，三端按 CJS 走主/预加载。
+- **Electron 33 内置 Node 20 没有 `node:sqlite`**（用户真实终端实测撞破，非沙箱特有）：
+  pi-coding-agent 嵌套依赖 undici 的 HTTP 缓存存储引了 `node:sqlite`（Node 22.13+ 才有），
+  rollup 打包时把该 require 提升到 bundle 顶部，主进程一启动就
+  `ERR_UNKNOWN_BUILTIN_MODULE`。修法：Electron 升到 36（内置 Node 22.14）。
+  升级时若 `EBUSY`（electron dist 被残留进程锁住），先杀干净 electron 进程再装。
 - **同文件并行 Edit 会互相覆盖**（本轮实测两次）：对一个文件的多处修改必须顺序提交，
   不能在同一条消息里并行发多个 Edit。
 
@@ -97,6 +102,7 @@ invoke 的请求-响应语义不该被一次长跑占住；事件与终态全部
   取消不存在返回 false、env 模式无凭据给明确指引）。
 - `electron-vite build`：三端产物齐全（preload 为 CJS）。
 - electron 启动冒烟：主进程存活、无 FATAL / Uncaught（`--disable-gpu --in-process-gpu`）。
+- Electron 36（内置 Node 22.14）下重建 + 冒烟复验通过；用户真实终端 `npx electron .` 启动正常。
 - 未验证：真实 provider 模式（需要凭据，链路与 CLI 共用、已在步 8/9 验过）；打包发行（Forge）。
 
 ## 6. 局限（留给后续步）
