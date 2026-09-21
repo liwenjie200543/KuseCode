@@ -53,6 +53,26 @@ export function isTerminalEvent(type: AgentEvent["type"]): boolean {
 }
 
 /**
+ * 输入必须是一条**从头开始的连续前缀**：`sequence` 从 0 起、严格 +1。
+ *
+ * 这条检查从 `replayAgentState` 里抽出来，是因为步 9 的 trace（`./trace.ts`）
+ * 需要**同一条**前置条件：它同样在回答"这串事件说的是哪次 Run"。
+ * 两份实现会让这两处对"什么算一份完整的日志"给出不同答案，而它们必须一致——
+ * 一份 trace 不该比回放更宽容，否则 trace 会信心十足地描述一次回放拒绝承认的运行。
+ */
+export function assertContiguousPrefix(events: readonly AgentEvent[]): void {
+  for (const [index, event] of events.entries()) {
+    if (event.sequence !== index) {
+      throw new Error(
+        `事件流必须是一条从头开始的连续前缀：第 ${index + 1} 条的 sequence ` +
+          `应该是 ${index}，日志里却是 ${event.sequence}` +
+          `（有洞、有重复，或者这不是从头开始的一段）`,
+      );
+    }
+  }
+}
+
+/**
  * 到不了这里。它存在是为了让下面那个 `switch (event.type)` 的**穷尽性**变成
  * 编译期的事：谁往步 2 的 `AgentEvent` 里加第 14 种事件，那个 switch 就漏了一个
  * 分支，于是 `event` 在 `default` 里不再是 `never`，这一行立刻编译不过。
@@ -101,20 +121,14 @@ function unsupported(eventType: AgentEvent["type"]): never {
  * 是**照抄实时语义**。代价见 `docs/07-durability-replay.md` 的局限二。
  */
 export function replayAgentState(events: readonly AgentEvent[], task: Task): AgentState {
+  assertContiguousPrefix(events);
+
   let state = emptyStateFor(task);
   /** 已经决定、还没有观测回来的那一次调用。 */
   let pending: Extract<Decision, { kind: "call_tool" }> | null = null;
   let terminal: AgentEvent["type"] | null = null;
 
   for (const [index, event] of events.entries()) {
-    if (event.sequence !== index) {
-      throw new Error(
-        `回放的输入必须是一条从头开始的连续事件流：第 ${index + 1} 条的 sequence ` +
-          `应该是 ${index}，日志里却是 ${event.sequence}` +
-          `（有洞、有重复，或者这不是从头开始的一段）`,
-      );
-    }
-
     if (
       terminal !== null &&
       (event.type === "decision_made" || event.type === "observation_added")

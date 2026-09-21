@@ -31,6 +31,9 @@ import {
 
 let root = "";
 
+/** 写在"这次 Run 自己的产物"里的字串。见文末那个 describe。 */
+const OWN_ARTIFACT = "run-own-artifact-marker";
+
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "kusecode-repo-tools-"));
   await mkdir(join(root, "src", "deep"), { recursive: true });
@@ -51,6 +54,9 @@ beforeAll(async () => {
   await writeFile(join(root, ".git", "config"), "reduce\n");
   // 含 NUL 的文件：二进制，搜索应当跳过它而不是崩掉
   await writeFile(join(root, "binary.bin"), Buffer.from([0x00, 0x01, 0x52, 0x65, 0x64]));
+  // 一个"这次 Run 自己的产物"目录：它的内容不该被当成材料（见文末那个 describe）
+  await mkdir(join(root, "vendor", "runs"), { recursive: true });
+  await writeFile(join(root, "vendor", "runs", "artifact.txt"), `${OWN_ARTIFACT}\n`);
 });
 
 afterAll(async () => {
@@ -385,5 +391,73 @@ describe("取消", () => {
     const result = await exec({ name: "search_text", args: { pattern: "x" } }, controller.signal);
     // 这一条区分很要紧：`invalid_args` 会被模型改参数后重试，而取消不是它的错
     expect(result.error?.code).not.toBe("invalid_args");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 这次 Run 自己的产物不是材料
+//
+// 这条规则是**实测撞出来的**，而且它撞在默认配置上：`--repo` 默认当前目录、
+// `--store` 默认 `./runs`，于是存储就在被分析的仓库里面。事件日志里写着任务文本，
+// 所以一次 `search_text` 会命中**这次 Run 自己的日志**——Run 把输出当成了输入，
+// 而且下一次运行会看到上一次的日志，越滚越多。
+//
+// 修法的形状值得记下来：跳过的是**仓库相对路径**，不是目录名。用名字会让一个
+// 真正叫 `runs` 的素材目录被静默漏掉，而"静默漏掉材料"看起来就像那个仓库里
+// 没有那些文件——这个项目最不愿发生的一类错误。
+// ---------------------------------------------------------------------------
+
+describe("被点名的目录按路径跳过", () => {
+  it("只跳过被点名的那一个位置，同名的别处照常搜到", async () => {
+    // 同一个目录名出现在两个位置：只跳过被点名的那个。
+    await mkdir(join(root, "src", "runs"), { recursive: true });
+    await writeFile(join(root, "src", "runs", "keep.txt"), `${OWN_ARTIFACT}\n`);
+
+    const scoped = createRepoTools({ repoRoot: root, ignore: ["vendor/runs"] });
+    const outcome = await scoped.port.execute(
+      { name: "search_text", args: { pattern: OWN_ARTIFACT } },
+      new AbortController().signal,
+    );
+    expect(outcome.error).toBeNull();
+    const paths = ((outcome.value as { matches: readonly { path: string }[] }).matches).map((m) => m.path);
+
+    expect(paths).toContain("src/runs/keep.txt");
+    expect(paths.some((path) => path.startsWith("vendor/runs/"))).toBe(false);
+  });
+
+  it("不点名的时候它照常是材料（这条规则是配置，不是内置的假设）", async () => {
+    const plain = createRepoTools({ repoRoot: root });
+    const outcome = await plain.port.execute(
+      { name: "search_text", args: { pattern: OWN_ARTIFACT } },
+      new AbortController().signal,
+    );
+    const paths = ((outcome.value as { matches: readonly { path: string }[] }).matches).map((m) => m.path);
+
+    expect(paths).toContain("vendor/runs/artifact.txt");
+  });
+
+  it("list_dir 里也看不见它", async () => {
+    const scoped = createRepoTools({ repoRoot: root, ignore: ["vendor/runs"] });
+    const outcome = await scoped.port.execute(
+      { name: "list_dir", args: { path: "vendor" } },
+      new AbortController().signal,
+    );
+
+    const entries = (outcome.value as { entries: readonly { name: string }[] }).entries;
+    expect(entries.map((entry) => entry.name)).toEqual([]);
+  });
+
+  it("反斜杠与末尾斜杠都归一化：规则是给人写的，不该因为平台而变", async () => {
+    // 用 `join` 拼出真的反斜杠，而不是写在字面量里：写在字面量里会被转义层
+    // 吃掉一层，读的人分不清它到底是几个，而这条用例要测的恰恰就是那一个字符。
+    const windowsStyle = `${["vendor", "runs"].join("\\")}\\`;
+    const scoped = createRepoTools({ repoRoot: root, ignore: [windowsStyle] });
+    const outcome = await scoped.port.execute(
+      { name: "list_dir", args: { path: "vendor" } },
+      new AbortController().signal,
+    );
+
+    const entries = (outcome.value as { entries: readonly { name: string }[] }).entries;
+    expect(entries.map((entry) => entry.name)).toEqual([]);
   });
 });

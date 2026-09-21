@@ -34,7 +34,7 @@
  * （步 4），于是存储能先定下它，而不必让 Runtime 知道存储的存在。
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { AgentEvent, AgentState, Run, RunStatus, Session, Task } from "../core/types.js";
@@ -100,6 +100,14 @@ export interface RecoveredRun {
 export interface SessionStore {
   createSession(): Promise<Session>;
   getSession(id: string): Promise<Session | null>;
+  /**
+   * 这个存储里已有的会话 id，按字典序。
+   *
+   * 它在这里而不是在 CLI 里"自己去看 `sessions/` 目录"：目录布局是存储的实现细节，
+   * 而步 9 的 `kuse sessions` 只需要"有哪些会话"。让产品层去 glob 一个内部目录，
+   * 等于把布局冻结成公开契约——那种依赖会在某次重构之后安静地坏掉。
+   */
+  listSessions(): Promise<readonly string[]>;
   /**
    * 把一个 Run 登记进会话，并交出它的日志与身份。
    *
@@ -195,10 +203,42 @@ export function createSessionStore(options: SessionStoreOptions): SessionStore {
   const rootDir = options.rootDir;
   const ids = options.ids ?? cryptoIds();
   const clock = options.clock ?? ((): number => Date.now());
-  const log = jsonlRunLog({ rootDir });
+const log = jsonlRunLog({ rootDir });
 
-  const load = async (sessionId: string): Promise<SessionRecord | null> =>
-    readSessionRecord(sessionPath(rootDir, sessionId));
+/**
+ * 这个字符串能不能当会话 id 用（也就是能不能当文件名）。
+ *
+ * 判据与写入路径用的是**同一个** `assertSafePathSegment`：这里只是把它的"抛错"
+ * 换成"是不是"。两处共用一份规则，所以"能写进去"与"能读出来"不可能分叉。
+ */
+function isUsableSessionId(value: string): boolean {
+  try {
+    assertSafePathSegment(value, "sessionId");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 读一份会话索引。
+ *
+ * 一个**不可能**是会话 id 的字符串（空、含分隔符、`..`）在这里的答案是 `null`——
+ * 也就是"没有这个会话"。这不是对坏输入的宽容，而是两个方向的严格程度本来就不同：
+ *
+ * - **写**一个坏名字是调用方的错误，必须抛（那条路仍然经过 `assertSafePathSegment`）；
+ * - **读**一个坏名字只是没找到。让它在只读路径上抛出去，会把用户的一次手误
+ *   （`kuse runs 'sess:a b'`）报成"内部错误"，而脚本据此分不清
+ *   "重试有用"与"参数得改"——正是退出码那张表要防的事。
+ *
+ * `startRun` 也走这里，于是"往一个坏名字里登记 Run"会得到
+ * 「会话 X 不存在：先 createSession() 再往里登记 Run」，而不是一句关于文件名的报错。
+ * 两句话都是真的，但前者对调用方更有用。
+ */
+const load = async (sessionId: string): Promise<SessionRecord | null> => {
+  if (!isUsableSessionId(sessionId)) return null;
+  return readSessionRecord(sessionPath(rootDir, sessionId));
+};
 
   /**
    * 从日志派生一个 `Run`。
@@ -240,6 +280,30 @@ export function createSessionStore(options: SessionStoreOptions): SessionStore {
         createdAt: record.createdAt,
         runs: record.runs.map((run) => deriveRun(run, record.id)),
       };
+    },
+
+    async listSessions(): Promise<readonly string[]> {
+      const dir = join(rootDir, "sessions");
+      let files: readonly string[];
+      try {
+        files = await readdir(dir);
+      } catch (error) {
+        // 一个还没写过任何会话的存储目录不是一个错误：它是"空的"。
+        // 别的错误（权限、路径被占）照常抛出——那些不是"没有会话"。
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          (error as { code?: unknown }).code === "ENOENT"
+        ) {
+          return [];
+        }
+        throw error;
+      }
+      return files
+        .filter((name) => name.endsWith(".json"))
+        .map((name) => name.slice(0, -".json".length))
+        .sort();
     },
 
     async startRun(sessionId: string, task: Task): Promise<StartedRun> {

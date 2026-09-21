@@ -31,7 +31,9 @@ import type { ToolCatalog } from "../src/adapter/pi/catalog.js";
 import { catalogFromToolbox } from "../src/adapter/pi/catalog.js";
 import { AdapterError } from "../src/adapter/pi/errors.js";
 import { piModelAdapter } from "../src/adapter/pi/model.js";
+import type { PiModelAdapterOptions } from "../src/adapter/pi/model.js";
 import { ASK_HUMAN_TOOL, SUBMIT_REPORT_TOOL } from "../src/adapter/pi/protocol.js";
+import { REDACTED, redactor } from "../src/core/redact.js";
 import type { AgentState } from "../src/core/types.js";
 import { createRepoTools } from "../src/tools/repo-tools.js";
 
@@ -75,7 +77,7 @@ interface Seen {
   options: SimpleStreamOptions | undefined;
 }
 
-function harness() {
+function harness(adapterOptions: Partial<PiModelAdapterOptions> = {}) {
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
@@ -92,6 +94,7 @@ function harness() {
     catalog,
     clock: () => 1_700_000_000_000,
     onEvent: (event) => events.push(event),
+    ...adapterOptions,
   });
 
   /**
@@ -421,5 +424,57 @@ describe("协议工具的身份", () => {
     expect(h.catalog.entry(SUBMIT_REPORT_TOOL)?.kind).toBe("terminal");
     expect(h.catalog.entry(ASK_HUMAN_TOOL)?.kind).toBe("terminal");
     expect(h.catalog.entry("read_file")?.kind).toBe("repo");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 凭据不许从 provider 的错误消息里流进事件日志
+//
+// 这是"外部字符串进入我们词汇表"的唯一一条路：provider 的报错原文经过
+// `providerFailureFromStopReason` / `providerFailureFromThrow` 变成
+// `RunError.message`，然后落进日志。一个把 key 回显进错误消息的 provider，
+// 就足以让凭据出现在**证据**里。
+//
+// 注意抹的时机：它必须发生在**变成 `RunError` 之前**，因为日志一旦写下就不再改写
+// （日志是证据）。放在这里而不是放在日志那一侧，是为了堵住源头而不是事后清洗。
+// ---------------------------------------------------------------------------
+
+describe("脱敏接在错误分类之前", () => {
+  it("provider 回显的凭据被抹掉，而错误的分类不受影响", async () => {
+    const key = "sk-leakedcredential1234567890";
+    const h = harness({ redact: redactor([key]) });
+    h.script(
+      fauxAssistantMessage("", {
+        stopReason: "error",
+        errorMessage: `401 Unauthorized: the key ${key} was rejected`,
+      }),
+    );
+
+    const result = await decide(h);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const error = result.error as AdapterError;
+    expect(error).toBeInstanceOf(AdapterError);
+    // 分类必须保住：`auth` 与 `provider_unavailable` 的后果完全不同
+    // （前者重试只是浪费，后者值得重试）。脱敏不该让分类退化成一个兜底码。
+    expect(error.code).toBe("auth");
+    // 而凭据不见了。
+    expect(error.message).not.toContain(key);
+    expect(error.message).toContain(REDACTED);
+  });
+
+  it("消息里没有凭据时原样抛出，保住原始栈", async () => {
+    // 原样抛出不是省事：`AdapterError` 之外的抛出物带着真实的调用栈，
+    // 而重新包一个错误会把它换成"我们包了一层"那片无用的栈。
+    const h = harness({ redact: redactor(["某个不相关的一长串值"]) });
+    h.script(
+      fauxAssistantMessage("", { stopReason: "error", errorMessage: "429 Too Many Requests: slow down" }),
+    );
+
+    const result = await decide(h);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect((result.error as AdapterError).code).toBe("rate_limited");
+    expect((result.error as Error).message).toContain("429");
   });
 });

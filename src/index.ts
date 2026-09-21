@@ -23,6 +23,7 @@ export type {
   // material and provenance
   Provenance,
   Evidence,
+  MaterialRef,
   // task
   Task,
   // tools
@@ -81,6 +82,10 @@ export type {
 // 各写一次，于是账本永远是未知；见 `docs/08` 决定 6）。
 export { UsageAccumulator, addUsage, unknownUsage } from "./core/usage.js";
 
+// 脱敏：一条"我们自己的凭据不进证据"的规矩。纯函数，规则只有一份——
+// 适配器用它洗掉 provider 回显的报错原文，CLI 用它洗掉每一行输出。
+export { REDACTED, redactText, redactValue, redactor, secretsFromEnv } from "./core/redact.js";
+
 // Runtime：把上面的循环翻译成一条有序事件流。
 // 身份（runId / toolCallId）、事件日志的契约、终态事件的构造都在这一侧。
 export { createRuntime, emptyStateFor, toRunError } from "./runtime/run-agent.js";
@@ -129,6 +134,18 @@ export type {
 // 回放：把一串事件折叠回状态。它没有一行 I/O——**从事件重建状态是语义，
 // 事件的载体是存储**。所以它在 runtime 里，而磁盘在下面。
 export { isRunOver, isTerminalEvent, replayAgentState, runStatusOf } from "./runtime/replay.js";
+export { assertContiguousPrefix } from "./runtime/replay.js";
+
+// trace：同一份日志的第三种看法（前两种是状态与位置）。它回答
+// "调用了什么 / 为什么停 / 花了多少"，而这三个答案**全部来自事件本身**——
+// token 数不重算、工具次数不重数，免得变成第二份会分叉的真相。
+export { traceOf } from "./runtime/trace.js";
+export type { RunTrace, TraceStep, TraceStop, TraceUsage } from "./runtime/trace.js";
+
+// 证据核对：把"每条论断都指向证据"从一句要求变成一件**可检查**的事。
+// 它只判断"这些行我们真的看到过吗"（可确定），不判断"结论对不对"（需要另一个模型）。
+export { auditReport, auditRun } from "./runtime/verify.js";
+export type { EvidenceAudit, MaterialReader } from "./runtime/verify.js";
 
 // 存储：事件的载体与会话索引。这是 `src/` 下面唯一允许碰 `node:` 的地方。
 // `jsonlRunLog` 是 `RunLog` 的生产实现；`createSessionStore` 把「哪些 Run 属于哪个
@@ -155,16 +172,43 @@ export {
   ToolArgumentError,
   createRepoTools,
   declaredKeysOf,
+  materialReader,
   resolveInsideRepo,
 } from "./tools/repo-tools.js";
 export type { JsonObjectSchema, ToolSpec, Toolbox } from "./tools/repo-tools.js";
 
 // ---------------------------------------------------------------------------
-// 下面这一段是 SDK 的唯一住所。删掉整个 `src/adapter`，包仍然编译、仍然跑得完假模型。
+// 产品面：一个人怎么发起一次 Run、又怎么看懂它。
+//
+// 它是唯一允许碰 `node:process` 的一层，而且**碰得很少**——`main(argv, io)`
+// 自己是一个纯函数（输入参数与 IO，输出退出码），`runCli()` 才是真入口。
+// 这是"Core 能没有进程地跑完"这条不变量在产品层最后一次被遵守。
+// ---------------------------------------------------------------------------
+
+export { EXIT, HELP, main, runCli } from "./cli/index.js";
+export type { CliIo, ExitCode } from "./cli/index.js";
+export { flagOn, flagValue, flagsMissingValue, parseArgs, unknownFlags } from "./cli/args.js";
+export type { ParseOptions, ParsedArgs } from "./cli/args.js";
+export {
+  REDACTION_NOTICE,
+  auditLines,
+  clip,
+  exitLine,
+  progressLine,
+  reportLines,
+  rule,
+  stopLine,
+  traceLines,
+} from "./cli/render.js";
+
+// ---------------------------------------------------------------------------
+// 下面这一段是 SDK 的唯一住所。删掉整个 `src/adapter`，包仍然编译、仍然跑得完假模型
+// （`test/no-runtime-deps.test.ts` 守着这条）。
 //
 // 纯映射层（错误归一 / 终止协议 / 决策解码 / 对话翻译 / 工具目录）与两个端口的
-// 生产实现都在这一侧。`usageFromMessage` 是这里唯一没有从 Core 再导出的用量函数
-// （算术在 Core，见上）——适配器只负责"provider 的 `usage` 字段怎么读"。
+// 生产实现都在这一侧，外加"模型从哪来"的两条路：真实 provider 目录的解析，
+// 以及一个**离线 provider**——它让整条真通道可以在没有凭据的机器上被跑一遍。
+// `usageFromMessage` 是这里唯一没有再导出的用量函数（算术在 Core，见上）。
 // ---------------------------------------------------------------------------
 
 export {
@@ -178,9 +222,12 @@ export {
   buildSystemPrompt,
   catalogFromToolbox,
   catalogOf,
+  createEnvModels,
   decideFromMessage,
   envModelIdentity,
   isTerminalTool,
+  offlineProvider,
+  parseModelSpec,
   piModelAdapter,
   piToolDefinitions,
   providerFailureFromStopReason,
@@ -188,6 +235,7 @@ export {
   readQuestion,
   readReport,
   renderObservationText,
+  resolveProviderModel,
   taskFacingContext,
   textOf,
   toolCallsOf,
@@ -196,10 +244,15 @@ export {
 export type {
   BuildRequestOptions,
   CatalogEntry,
+  ModelResolution,
+  ModelSpec,
+  OfflineProvider,
+  OfflineProviderOptions,
   PiModelAdapterOptions,
   PiToolBridgeOptions,
   ProviderFailure,
   ProviderIdentity,
   ProviderRequest,
+  ResolvedModel,
   ToolCatalog,
 } from "./adapter/pi/index.js";

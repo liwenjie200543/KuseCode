@@ -277,18 +277,21 @@ describe("回放是幂等的", () => {
 // ---------------------------------------------------------------------------
 
 describe("回放的输入必须是一条完整的日志", () => {
+  // 步 9：这条检查被提出来成了 `assertContiguousPrefix`，因为 trace 也要用同一把尺
+  // （`src/runtime/trace.ts` 读的是事实，但读之前同样得确认拿到的是一条从头开始的流）。
+  // 顺带把消息写清楚了一点：它现在报出**实际看到的 sequence**，而不只是说"不对"。
   it("从中间截一段出来（第一条不是 sequence 0）被拒绝", async () => {
     const live = await liveRun([callTool(readFile), respond("读完了")]);
     const tail = live.events.slice(1);
 
-    expect(() => replayAgentState(tail, task)).toThrow(/连续事件流/);
+    expect(() => replayAgentState(tail, task)).toThrow(/从头开始的连续前缀/);
   });
 
   it("有洞的事件流被拒绝", async () => {
     const live = await liveRun([callTool(readFile), respond("读完了")]);
     const withHole = [must(live.events[0], "0"), must(live.events[2], "2")];
 
-    expect(() => replayAgentState(withHole, task)).toThrow(/有洞、有重复|连续事件流/);
+    expect(() => replayAgentState(withHole, task)).toThrow(/有洞、有重复|连续前缀/);
   });
 
   it("run_started 不在第一条被拒绝", async () => {

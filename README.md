@@ -61,32 +61,34 @@ Each step is one commit and proves one first-principles claim.
 
 ## Status
 
-Step 8 done. The Pi Agent SDK is now behind the ports — and behind the ports is a claim you
-can check by deleting a directory: **remove `src/adapter` and the package still compiles and
-still runs to completion with a fake model.** The SDK ships two layers, and which one to use
-was the whole of this step: `pi-coding-agent` owns an entire loop (the loop step 3 gave to the
-Core), while `pi-ai` owns a single model turn, which is exactly what `ModelPort.decide` is. So
-`decide` is built on `pi-ai`'s stream, and `pi-coding-agent`'s `defineTool` is used the other
-way around — to prove the same `ToolPort` also drives the SDK's own loop. Both directions work,
-which is what "replaceable" means. The base version is pinned to `0.84.2`; a range would make
-the mapping table expire silently.
+Step 9 done. There is a product surface now: `kuse run` starts a Run and prints what it called,
+why it stopped and what it cost; `kuse trace` / `kuse runs` / `kuse sessions` re-read a finished
+Run from its log without re-running anything or loading the SDK. The exit code **is** the answer
+to "why did it stop" in machine-readable form — `0/10/11/12/13` are "the Run happened but did not
+finish" (complete / partial / failed / cancelled / awaiting a human), while `2/3` are "the Run never
+started" — so a script can tell "retry will help" from "fix the arguments first".
 
-Termination is expressed as tools (`submit_report` / `ask_human`) that the adapter consumes and
-**never** hands to `ToolPort` — deciding to stop is not a tool execution. The stream does not
-reject on provider failure: it ends with a `stopReason: "error"` message, so failure detection is
-`stopReason`, not `try/catch` (only-`try/catch` hands the provider's error text back as a
-report). Retries have exactly one owner — the adapter pins SDK `maxRetries` to 0, and the type
-says so; the retry policy lives in `src/runtime/retry.ts` and only reads normalized error codes.
-Cancellation carries no code, because only the Runtime can tell "the user cancelled" from "the
-wall clock ran out". Usage is `null` when a provider does not report it, and the per-run ledger
-distinguishes "empty" from "unknown" — getting that wrong made every token count silently
-`null`, which is documented in full in `docs/08-pi-adapter.md`. Three real repository tools
-(`read_file` / `list_dir` / `search_text`) now read the actual filesystem, validating their own
-JSON Schema and confining every path to the repository root. The CLI and trace are ahead.
+The step's real work is that `README`'s opening sentence became **executable**. Until now
+"every claim points at evidence" was only *demanded* (a system prompt asked the model to do it);
+now `auditRun` checks it: every cited path and line range is tested for **containment** in what the
+tools actually returned, and a claim with no evidence is printed rather than omitted. What it does
+not check is whether the claim is *true* — that needs another model. It checks whether the lines were
+ever *seen*, which is the part that can be decided with certainty.
+
+Two things were found by running it rather than by reasoning about it. First, a truncated
+`search_text` result made the checker accuse a valid citation of "never seen" — truncation *replaces*
+the value, so the structure is gone and "cannot extract" is not "did not see"; the audit now
+degrades its own wording (and its `conclusive` flag) instead of making a false accusation. Second,
+the default layout puts the store **inside** the repository, so a search hit the Run's own event log
+— the report's first piece of evidence was its own `events.jsonl`. The CLI now computes whether the
+store is inside the repo and tells the tools to skip that path (by path, not by directory name: a
+real `runs/` directory of source would otherwise be silently dropped). Credentials are handled in
+two opposite directions — ours are scrubbed before they reach output or the log; a secret written in
+the analyzed repository is **kept**, because it is the evidence.
 
 Per-step reasoning lives in `docs/02-core-contracts.md`, `docs/03-core-loop.md`,
 `docs/04-run-events.md`, `docs/05-budget-cancellation.md`, `docs/06-tool-execution.md`,
-`docs/07-durability-replay.md` and `docs/08-pi-adapter.md`.
+`docs/07-durability-replay.md`, `docs/08-pi-adapter.md` and `docs/09-cli-trace.md`.
 
 ## Commands
 
@@ -98,6 +100,30 @@ npm run build
 ```
 
 Node >= 22 is required.
+
+The CLI needs a build first (`bin/kuse.mjs` loads `dist/`):
+
+```bash
+npm run build
+node bin/kuse.mjs help
+# an offline smoke run: real tools, real filesystem, real event log, scripted "model"
+node bin/kuse.mjs run "这个仓库里有哪些 TODO？" --repo . --offline
+# re-read a finished run without re-running anything (no SDK is loaded)
+node bin/kuse.mjs runs <sessionId>
+node bin/kuse.mjs trace <sessionId> <runId>
+```
+
+`--model provider/model` uses a real provider (credentials come from the environment); `--offline`
+is a scripted provider that walks `list_dir → search_text → read_file → submit_report`, so the whole
+chain can be exercised with no credentials, deterministically and offline.
+
+For the parts the CLI cannot show — swapping the model out mid-run, cancellation landing **between**
+the decision and the tool call, a suspended run being recovered from disk after a "crash" — there is
+a narrative walkthrough:
+
+```bash
+node examples/end-to-end.mjs
+```
 
 ## 提交约定
 

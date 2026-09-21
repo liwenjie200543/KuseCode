@@ -474,10 +474,10 @@ export function collectMissingMaterial(state: AgentState): readonly string[] {
 
     if (message.observation.error !== null) {
       const { code, message: text } = message.observation.error;
-      push(`${describeIntent(message.intent)}：${code}——${short(text, ARG_DIGEST_CHAR_LIMIT)}`);
+      push(`${digestIntent(message.intent)}：${code}——${short(text, ARG_DIGEST_CHAR_LIMIT)}`);
     } else if (message.observation.truncated) {
       push(
-        `${describeIntent(message.intent)}：结果被截断` +
+        `${digestIntent(message.intent)}：结果被截断` +
           `（只保留了前 ${OBSERVATION_CHAR_LIMIT} 个字符）`,
       );
     }
@@ -492,13 +492,21 @@ export function collectMissingMaterial(state: AgentState): readonly string[] {
     const next = transcript[index + 1];
     if (next !== undefined && next.role === "tool") continue;
 
-    push(`${describeIntent(message.decision.intent)}：调用没有回来（有意图、无观测）`);
+    push(`${digestIntent(message.decision.intent)}：调用没有回来（有意图、无观测）`);
   }
 
   return missing;
 }
 
-function describeIntent(intent: ToolIntent): string {
+/**
+ * 「一次调用」压成一行：`工具名(参数摘要)`，有长度上限。
+ *
+ * 它导出，是因为它是**两处的同一句话**：`missingMaterial` 的清单项要用它
+ * （"哪个调用没拿到材料"），步 9 的 trace 也要用它（"按序调用了什么"）。
+ * 各写一份的话，同一份日志在两处会被描述成不同的样子——而清单与 trace
+ * 必须能互相核对，否则"缺了什么"就没法和"做过什么"对上账。
+ */
+export function digestIntent(intent: ToolIntent): string {
   const keys = Object.keys(intent.args);
   if (keys.length === 0) return intent.name;
   const digest = JSON.stringify(intent.args);

@@ -24,7 +24,7 @@
 
 import { readFile, readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { ToolIntent, ToolOutcome, ToolPort } from "../core/types.js";
+import type { MaterialRef, ToolIntent, ToolOutcome, ToolPort } from "../core/types.js";
 
 // ---------------------------------------------------------------------------
 // 形状
@@ -77,8 +77,49 @@ export interface ToolSpec {
   /** 干活。参数已经过 `parse`。返回的必须是可 JSON 表示的值。 */
   readonly run: (
     args: Record<string, unknown>,
-    context: { readonly repoRoot: string; readonly signal: AbortSignal },
+    context: ToolContext,
   ) => Promise<unknown>;
+  /**
+   * 这次结果让我们**看到了**哪些材料。
+   *
+   * 它在这里，而不是在一个"认识所有工具"的核对器里，理由与 schema 一样：
+   * 「`read_file` 的返回里哪两个字段是行号」这件事只有 `read_file` 知道。
+   * 步 9 的证据核对（`src/runtime/verify.ts`）靠它把"看到过什么"抽出来，
+   * 于是核对器不需要知道任何一个工具的名字。
+   *
+   * 省略它的工具 = 它的结果不构成可引用的材料（今天没有这样的工具，但形状上允许）。
+   */
+  readonly material?: (value: unknown) => readonly MaterialRef[];
+}
+
+/**
+ * 工具干活时能看到的那一小片世界。
+ *
+ * `ignore` 不是常量，因为"哪些目录不是材料"有一半是**这次运行自己造成的**：
+ * 默认的存储目录 `./runs` 落在被分析的仓库里面，而它装着这次 Run 自己的事件日志，
+ * 日志里有任务文本，于是搜索会命中自己。那是自指的——Run 把它的输出当成了输入。
+ * 这件事是实测撞出来的，见 `docs/09-cli-trace.md` 的「Run 不许读到自己的产物」。
+ */
+export interface ToolContext {
+  readonly repoRoot: string;
+  readonly signal: AbortSignal;
+  readonly ignore: IgnoreRules;
+}
+
+/**
+ * 「哪些目录不是材料」的两条规则。
+ *
+ * 它们必须分开，因为"跑到哪一层都该跳过"与"只有那一个位置该跳过"是两件事：
+ *
+ * - `names`：目录名，任意深度生效。`node_modules` 这种共识属于这里。
+ * - `paths`：**仓库相对路径**，只在那一个位置生效。这次 Run 自己的产物属于这里。
+ *
+ * 为什么产物那条不能用名字：一个叫 `runs` 的素材目录会被静默漏掉，而"静默漏掉
+ * 材料"正是这个项目最不愿发生的一件事——它看起来就像那个仓库里没有那些文件。
+ */
+export interface IgnoreRules {
+  readonly names: ReadonlySet<string>;
+  readonly paths: ReadonlySet<string>;
 }
 
 /** 一个工具集：既能当 `ToolPort` 用，也能把自己的 schema 交出去。 */
@@ -164,8 +205,48 @@ function toRepoPath(repoRoot: string, absolute: string): string {
   return rel.split(sep).join("/");
 }
 
+// ---------------------------------------------------------------------------
+// 材料抽取：从**返回值**里读出"这次看到了什么"
+//
+// 这些函数只认自己那个工具的返回形状。它们宽松（字段缺失就少一条），因为它们的
+// 职责是"如实抽出看到的东西"，不是"校验返回值得对不对"——返回值是我们自己造的，
+// 校验它等于不信任自己；而少抽一条的后果只是核对时保守一点。
+// ---------------------------------------------------------------------------
+
+function asValue(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function stringAt(record: Record<string, unknown> | null, key: string): string | null {
+  const value = record?.[key];
+  return typeof value === "string" ? value : null;
+}
+
+function numberAt(record: Record<string, unknown> | null, key: string): number | null {
+  const value = record?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** 路径拼接：`.` 是根目录，不能拼成 `./name`。 */
+function joinRepoPath(base: string | null, name: string): string {
+  if (base === null || base === "" || base === ".") return name;
+  return `${base.replace(/\/$/, "")}/${name}`;
+}
+
 /** 用不着读的东西：它们不是"材料"，是噪声，而且体积可能极大。 */
-const IGNORED_DIRECTORIES = new Set([".git", "node_modules", "dist", "coverage", ".workbuddy"]);
+const IGNORED_DIRECTORY_NAMES = Object.freeze([
+  ".git",
+  "node_modules",
+  "dist",
+  "coverage",
+  ".workbuddy",
+]);
+
+/** 这个目录该不该跳过。两条规则见 `IgnoreRules`。 */
+function isIgnored(relativePath: string, name: string, ignore: IgnoreRules): boolean {
+  return ignore.names.has(name) || ignore.paths.has(relativePath);
+}
 
 // ---------------------------------------------------------------------------
 // read_file
@@ -227,6 +308,16 @@ const readFileSpec: ToolSpec = {
       lines,
     };
   },
+  material(value) {
+    const record = asValue(value);
+    const path = stringAt(record, "path");
+    if (path === null) return [];
+    const start = numberAt(record, "startLine");
+    const end = numberAt(record, "endLine");
+    // 空窗口（`endLine < startLine`）不是一个"看到了"的行区间，记成 null。
+    const lines = start !== null && end !== null && end >= start ? ([start, end] as const) : null;
+    return [{ path, lines }];
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -259,7 +350,7 @@ const listDirSpec: ToolSpec = {
 
     const raw = await readdir(absolute, { withFileTypes: true });
     const visible = raw
-      .filter((entry) => !IGNORED_DIRECTORIES.has(entry.name))
+      .filter((entry) => !isIgnored(joinRepoPath(path, entry.name), entry.name, context.ignore))
       .sort((a, b) => a.name.localeCompare(b.name));
     const shown = visible.slice(0, MAX_ENTRIES);
     return {
@@ -272,6 +363,19 @@ const listDirSpec: ToolSpec = {
       // 被省略的数量是可见的：模型不该以为"列全了"
       omitted: visible.length - shown.length,
     };
+  },
+  material(value) {
+    const record = asValue(value);
+    const base = stringAt(record, "path");
+    const entries = record?.["entries"];
+    if (!Array.isArray(entries)) return [];
+    const refs: MaterialRef[] = [];
+    for (const entry of entries) {
+      const name = stringAt(asValue(entry), "name");
+      // 列目录只说明"这个路径存在"，没有看到它的任何一行，所以 lines 是 null。
+      if (name !== null) refs.push({ path: joinRepoPath(base, name), lines: null });
+    }
+    return refs;
   },
 };
 
@@ -328,8 +432,9 @@ const searchTextSpec: ToolSpec = {
       const entries = await readdir(directory, { withFileTypes: true });
       for (const entry of entries) {
         if (stopped) return;
-        if (IGNORED_DIRECTORIES.has(entry.name)) continue;
         const child = join(directory, entry.name);
+        // 相对路径在**跳过之前**就要算出来：按路径生效的那条规则要看它。
+        if (isIgnored(toRepoPath(context.repoRoot, child), entry.name, context.ignore)) continue;
         if (entry.isDirectory()) {
           await walk(child);
           continue;
@@ -364,7 +469,40 @@ const searchTextSpec: ToolSpec = {
     await walk(resolve(context.repoRoot));
     return { pattern, matches, scannedFiles: scanned, stoppedEarly: stopped };
   },
+  material(value) {
+    const record = asValue(value);
+    const matches = record?.["matches"];
+    if (!Array.isArray(matches)) return [];
+    const refs: MaterialRef[] = [];
+    for (const match of matches) {
+      const entry = asValue(match);
+      const path = stringAt(entry, "path");
+      const line = numberAt(entry, "line");
+      // 一条命中就是"看到了这一行"：区间退化成 [line, line]。
+      if (path !== null && line !== null) refs.push({ path, lines: [line, line] });
+    }
+    return refs;
+  },
 };
+
+/**
+ * 把工具集变成一个「从观测里读出看到了什么」的读取器。
+ *
+ * 它按**工具名**分派到各自的 `material`：核对器（`src/runtime/verify.ts`）于是
+ * 不需要认识任何工具。名字对不上（观测来自一个不在这个工具集里的工具）时返回
+ * 空数组——那意味着"这次调用没有提供可引用的材料"，保守但诚实。
+ */
+export function materialReader(box: Toolbox): (observation: {
+  readonly tool: string;
+  readonly value: unknown;
+}) => readonly MaterialRef[] {
+  const byName = new Map(box.specs.map((spec) => [spec.name, spec]));
+  return (observation) => {
+    const spec = byName.get(observation.tool);
+    if (spec?.material === undefined) return [];
+    return spec.material(observation.value);
+  };
+}
 
 // ---------------------------------------------------------------------------
 // 组装
@@ -374,11 +512,34 @@ const searchTextSpec: ToolSpec = {
  * 建一个真实工具集。
  *
  * 三个工具都在 `value` 里带自己的文件身份（`path` / 行号），所以模型引用证据时
- * 抄的是它**看到过**的东西，而不是自己编的路径。至于"模型抄错了怎么办"——
- * 那需要把 claims 里的 evidence 拿回来与观测核对，属于步 9/10，不在这里假装解决。
+ * 抄的是它**看到过**的东西，而不是自己编的路径。核对「模型抄错了没有」在
+ * `src/runtime/verify.ts`（步 9），不在这里假装解决。
  */
-export function createRepoTools(options: { readonly repoRoot: string }): Toolbox {
+export interface RepoToolsOptions {
+  readonly repoRoot: string;
+  /**
+   * 还要跳过哪些目录，写成**仓库相对路径**（`runs`、`out/runs`）。
+   *
+   * 由调用方给，因为"这次 Run 的产物在哪"只有发起它的那一层知道。
+   * 典型用法是 CLI：它同时知道 `--repo` 与 `--store`，于是能算出存储目录是不是
+   * 落在被分析的仓库里面——而那件事一旦成立，Run 就会读到自己的事件日志。
+   *
+   * 注意它的作用范围是**发现**（`list_dir` / `search_text`）：
+   * `read_file` 仍然能显式读到一个被跳过的路径。这是一条刻意的边界——
+   * 被跳过的目录只是"我们不推给模型"，不是"禁止访问"；而且拦在这里也只是把
+   * 同一条限制在另一个地方再写一遍，代价是 `read_file` 的行为开始取决于
+   * 一个与它无关的清单。
+   */
+  readonly ignore?: readonly string[];
+}
+
+export function createRepoTools(options: RepoToolsOptions): Toolbox {
   const repoRoot = resolve(options.repoRoot);
+  const ignore: IgnoreRules = {
+    names: new Set(IGNORED_DIRECTORY_NAMES),
+    // 统一成 POSIX 分隔符：规则是给人写的（`out/runs`），不该因为平台而变。
+    paths: new Set((options.ignore ?? []).map((path) => path.replace(/\\/g, "/").replace(/\/+$/, ""))),
+  };
   const specs: readonly ToolSpec[] = Object.freeze([readFileSpec, listDirSpec, searchTextSpec]);
   const byName = new Map(specs.map((spec) => [spec.name, spec]));
 
@@ -406,7 +567,7 @@ export function createRepoTools(options: { readonly repoRoot: string }): Toolbox
         return { value: null, error: failureOf(error) };
       }
       try {
-        const value = await spec.run(args, { repoRoot, signal });
+        const value = await spec.run(args, { repoRoot, signal, ignore });
         return { value, error: null };
       } catch (error) {
         // 文件不存在、权限、编码——都是"这次没拿到材料"，不是 Run 的失败。

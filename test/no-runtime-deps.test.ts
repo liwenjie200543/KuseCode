@@ -154,11 +154,68 @@ describe("I/O 只住在存储层", () => {
         const relative = file.slice(repoRoot.length).replace(/\\/g, "/");
         // `src/store`：事件的载体（步 7）
         // `src/tools`：真实工具真的去读文件系统（步 8）——它就是"材料从哪来"的答案
-        if (relative.startsWith("src/store/") || relative.startsWith("src/tools/")) continue;
+        // `src/cli`：产品面就是进程本身（步 9）——它读 argv、写 stdout、接 SIGINT
+        if (
+          relative.startsWith("src/store/") ||
+          relative.startsWith("src/tools/") ||
+          relative.startsWith("src/cli/")
+        ) {
+          continue;
+        }
         outside.push(`${relative} → ${spec}`);
       }
     }
-    expect(outside, "只有 src/store 与 src/tools 可以碰 node: 内置模块").toEqual([]);
+    expect(outside, "只有 src/store、src/tools 与 src/cli 可以碰 node: 内置模块").toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 步 9 的那条边界：**产品面在最上面，没人可以回头 import 它。**
+//
+// "CLI 在上面"这句话如果只写在分层图里，它会在第一次图方便的时候失效——
+// 比如 Runtime 想"顺手"读一下 `process.env`，或者 Core 想借 CLI 的渲染函数
+// 打印点什么。那一次改动不会报错，只会把最下面那层的纯度作废，
+// 而"Core 能在没有进程的情况下跑完"就不再成立了。
+//
+// 所以这条检查拦的是**方向**，不是位置：`src/cli` 可以 import 任何人，
+// 而任何人都不许 import `src/cli`。它与"SDK 只准住在 src/adapter"是一对——
+// 一条管外来的东西不能进去，一条管上面的东西不能被拉下去。
+// ---------------------------------------------------------------------------
+describe("产品面在最上面：下面各层不许回头 import 它", () => {
+  // 扫描范围是**被点名的六层**，不是整个 `src/`。
+  //
+  // 差别在根目录那个 `src/index.ts`：它是包的公共出口，职责恰恰是把所有东西
+  // （包括 CLI）聚合起来再交出去。把它算进来，这条检查就变成了"谁也不许导出 CLI"，
+  // 那是另一条规矩，而且是错的。要守的是**方向**——层里的人不能回头望，
+  // 站在最上面的出口不算"下面某一层"。
+  const layers = ["core", "runtime", "store", "tools", "adapter", "testing"];
+
+  it("src/{core,runtime,store,tools,adapter,testing} 里没有任何一条 import 指向 src/cli", () => {
+    const offenders: string[] = [];
+    for (const layer of layers) {
+      for (const file of listTsFiles(join(srcDir, layer))) {
+        const relative = file.slice(repoRoot.length).replace(/\\/g, "/");
+        for (const spec of importSpecifiers(readFileSync(file, "utf8"))) {
+          const target = spec.startsWith(".")
+            ? resolve(dirname(file), spec)
+            : spec;
+          if (typeof target === "string" && /[\\/]cli[\\/]/.test(target)) {
+            offenders.push(`${relative} → ${spec}`);
+          }
+        }
+      }
+    }
+    expect(offenders, "src/cli 是最上面那一层，它不能被下面的任何一层 import").toEqual([]);
+  });
+
+  it("bin/ 只 import dist 与 node: 内置模块", () => {
+    for (const name of readdirSync(join(repoRoot, "bin"))) {
+      const file = join(repoRoot, "bin", name);
+      for (const spec of importSpecifiers(readFileSync(file, "utf8"))) {
+        const ok = spec.startsWith("node:") || spec.startsWith("../dist/");
+        expect(ok, `bin/${name} 只该 import dist 或 node: 内置模块，发现：${spec}`).toBe(true);
+      }
+    }
   });
 });
 

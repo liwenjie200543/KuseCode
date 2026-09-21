@@ -181,7 +181,7 @@ parameters: Type.Unsafe(entry.parameters as TSchema)
 
 工具因此仍然**不许**自填 `provenance` / `truncated`（步 2 的禁令没动），`test/repo-tools.test.ts` 有一条断言检查返回的 `value` 里没有这两个键。
 
-至于"模型抄错了路径怎么办"——那需要把 claims 里的 evidence 拿回来与观测核对，属于步 9/10，这里不假装解决。
+至于"模型抄错了路径怎么办"——那需要把 claims 里的 evidence 拿回来与观测核对。**步 9 已落地**（`src/runtime/verify.ts` 的 `auditRun`），而且它落在**工具自己**的 `material`（边界决定 11 承诺的那条）：核对器不认识任何一个工具的名字。
 
 ### 12. 每次失败都是一条**可返回的**观测，而且分类要准
 
@@ -218,6 +218,12 @@ parameters: Type.Unsafe(entry.parameters as TSchema)
 4. `src/` 下面**没有**任何一个 SDK import 落在 `src/adapter` 之外。
 
 同一条边界还从另一侧收紧了：`node:` 引用的白名单这一步从 `src/store` 放宽到 `src/store` + `src/tools`。这不是妥协，而是这条边界本来就该有的形状——"I/O 只准住在存储层"说的其实是**语义层不许有 I/O**；真实工具去读文件系统是它的职责本身，而 Runtime 仍然是零 I/O 的。所以放宽的是"谁的职责就是碰世界"，收紧的是核心语义——方向恰好相反的两件事。
+
+**步 9 的补充（两条，方向相反）**：
+
+- 白名单又加了一格 `src/cli`——产品面就是进程本身，它读 `argv`、写 `stdout`、接 `SIGINT`。理由是同一句：**放宽的是"谁的职责就是碰世界"**，而 Client 是那一层。
+- 同一句话在**加载时间**上也成立：`src/cli` 通过 `await import("../adapter/pi/index.js")` 拿适配器，而 `kuse trace` / `runs` / `sessions` / `help` 一行 SDK 都不加载（实测 1.50s → 0.11s）。注意它 import 的是**相对路径**，不是包名——所以第 4 条断言（"SDK import 不许落在 `src/adapter` 之外"）没有被削弱：SDK 的**包名**依然只出现在 `src/adapter` 里。
+- 反向又加了一条守卫：**`src/cli` 是最上面那一层，下面六层谁都不许 import 它**。它与"SDK 只准住在 `src/adapter`"是一对——一条管外来的东西不能进去，一条管上面的东西不能被拉下去。两句话都写成文件扫描（`test/no-runtime-deps.test.ts` 的两个 describe），因为写在分层图里的边界会在第一次图方便的时候失效。
 
 ## 四、验证
 
@@ -262,9 +268,9 @@ npm test
 |---|---|---|
 | 真机验证（真 provider、真凭据、真网络） | 有凭据的那一步 | `envModelIdentity()` 已经写好（从 `KUSECODE_MODEL` 读 `provider/model`），但**没有凭据就没有真机会话**。所以这一步证明的是"通道能接、映射成立"，不是"接上某个具体 provider 也对"。见局限一 |
 | `cacheRead` / `cacheWrite` / `reasoning` / `cost` | 有价格表的那一步 | `usage_reported` 的字段是步 2 定下的，成本换算需要价格表——那是产品面的事。代价见局限三 |
-| claims 里的 `evidence.path` 与观测的核对 | step 9/10 | 模型抄错了路径今天不会被发现。材料的身份已经在 `value` 里（边界决定 11），核对所需的东西齐了 |
+| claims 里的 `evidence.path` 与观测的核对 | **step 9 已落地** | 材料的身份已经在 `value` 里（边界决定 11），核对所需的东西齐了——预测成立。落点：`auditRun(事件, materialReader(toolbox))`，判据是**包含**（读了 1-2 行不能支撑引用 1-40 行），而且它核对的是"这些行我们真的看到过吗"，不是"这条论断对不对"（`docs/09-cli-trace.md` 三、决定 9） |
 | 批量意图（`Decision` 表达多个工具调用） | 有并行工具调用需求时 | 适配器选择**当场失败**而不是丢（边界决定 8）。修法在 Core，不在适配器 |
-| trace 呈现 `onEvent` 收到的流式增量 | step 9 | 适配器已经把事件交出去了（`onEvent` 观察者），把它读成人能看的东西是产品面的事 |
+| trace 呈现 `onEvent` 收到的流式增量 | 仍然推迟 | 适配器已经把事件交出去了（`onEvent` 观察者），而 **step 9 的 `progressLine` 读的是产品级事件**（`AgentEvent`），不是适配器的流式增量——那一层粒度更细，今天没有消费者 |
 | `vision` / 图像输入、`thinking` 块的语义 | 有需求时 | `fauxThinking` 与多模态内容类型在 SDK 里存在，但本项目的 Task 是"读代码"，没有消费者 |
 
 ## 六、局限（如实记录）

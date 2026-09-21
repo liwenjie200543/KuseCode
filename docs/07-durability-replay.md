@@ -169,8 +169,9 @@ replay.ts(234,12): error TS1360  Type '{ readonly run_started: "running"; … }'
 | `human_input_received` / `run_resumed` 的重建 | 恢复语义落地的那一步 | 回放**拒绝**它们（边界决定 6）：`reduce` 只接受决策，「把人的回答写进 transcript」这一步不存在。要有它，得先回答「挂起的 Run 被叫醒之后从哪继续」 |
 | 「在途的调用」如何回到状态里 | 同上 | 见边界决定 5 与局限二。今天它只存在于日志里，不在状态的投影里 |
 | `usage_reported` | **step 8 已落地，回放一行没改** | 表里已经表态为「不影响状态」（它是账目），所以步 8 不必回来改回放——**这条预测成立**，`replay.ts` 一行都没动（`usage_reported` 不在折叠规则里）。重试也一样：它改写的是「事件流怎么发生」，不是「事件说了什么状态」 |
-| 会话的其它操作（列出全部会话、删除、归档） | 出现消费者时 | 今天没有一个调用方需要它们；凭想象设计的接口会被假实现带偏（与步 4 把 `RunLog` 契约推迟到有驱动方时的理由同源） |
-| trace 渲染 | step 9 | 把日志读成人能看的东西，是产品面的事 |
+| `traceOf` 与前缀检查的复用 | **step 9 已落地** | 那条「输入必须是从头开始的连续前缀」的检查从 `replayAgentState` 里抽出来成了 `assertContiguousPrefix`，因为 trace 读的是同一份日志、回答的是同一层面的问题（"这串事件说的是哪一次 Run"）。**抽出来时消息顺便写清楚了**：它现在报出实际看到的 `sequence`，而不只是说"不对"。trace 与回放只有一处**刻意不同**——它对 `human_input_received` / `run_resumed` 不抛错，因为它不重建状态、只读事实（`docs/09-cli-trace.md` 一、决定 5） |
+| trace 渲染 | **step 9 已落地** | 把日志读成人能看的东西，是产品面的事：`src/cli/render.ts` 是与 `src/runtime/trace.ts` 分开的，因为"停止原因是 `cancelled`"与"那一行印成了 `cancelled（被取消）`"是两件需要各自被钉住的事 |
+| 会话的其它操作（列出全部会话、删除、归档） | **「列出全部会话」step 9 已落地**（`kuse sessions`），其余仍未做 | 落地的那一条印证了原来的理由：它是**因为有了消费者**才做的（`kuse sessions` 需要"有哪些会话"），而且它落在 `SessionStore.listSessions()` 而不是让 CLI 去 glob `sessions/` 目录——目录布局是存储的实现细节，让产品层依赖它等于把布局冻结成公开契约。删除与归档仍然没有消费者 |
 
 ## 六、局限（如实记录）
 

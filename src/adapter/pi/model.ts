@@ -39,11 +39,12 @@ import type {
   Tool as PiTool,
   TSchema,
 } from "@earendil-works/pi-ai";
-import type { AgentState, Decision, ModelPort, ModelUsage, ModelUsageLedger } from "../../core/types.js";
+import type { AgentState, Decision, ModelPort, ModelUsage, ModelUsageLedger, RunErrorCode } from "../../core/types.js";
+import { redactor, secretsFromEnv } from "../../core/redact.js";
 import { UsageAccumulator } from "../../core/usage.js";
 import type { ToolCatalog } from "./catalog.js";
 import { decideFromMessage } from "./decision.js";
-import { adapterError, providerFailureFromThrow } from "./errors.js";
+import { AdapterError, adapterError, providerFailureFromThrow } from "./errors.js";
 import { buildSystemPrompt, buildRequest } from "./history.js";
 import { usageFromMessage } from "./usage.js";
 
@@ -65,6 +66,18 @@ export interface PiModelAdapterOptions {
   readonly clock?: () => number;
   /** 每一轮流事件的观察者。用于 trace / 流式呈现；不改变决策语义。 */
   readonly onEvent?: (event: AssistantMessageEvent) => void;
+  /**
+   * 抹掉一句话里的凭据。默认按**本进程环境**构造（见 `src/core/redact.ts`）。
+   *
+   * 它接在这里而不是接在日志上，是因为这里是**外部字符串进入我们词汇表的
+   * 唯一一条路**：provider 的报错原文经过 `providerFailureFromStopReason` /
+   * `providerFailureFromThrow` 变成 `RunError.message`，然后落进事件日志。
+   * 一个把 key 回显进错误消息的 provider，就足以让凭据出现在证据里——
+   * 而"证据里只有材料，没有我们的凭据"是这个项目对日志的基本承诺。
+   *
+   * 注入它是为了让它可测：测试可以给一份假的环境，而不是去改真的 `process.env`。
+   */
+  readonly redact?: (text: string) => string;
 }
 
 /**
@@ -92,6 +105,30 @@ function toPiTool(entry: { name: string; description: string; parameters: unknow
 }
 
 /**
+ * 抹掉一个失败里的凭据，**不改变它的归因**。
+ *
+ * 两条必须同时成立：
+ *
+ * 1. **有 `code` 就还是有 `code`，没有就还是没有。** `code: null` 是"这次失败得由
+ *    Runtime 归因"的表示（我们喊停时用的），重新构造一个带 `code: undefined` 的
+ *    对象会把"归因权交回去了"这件事悄悄推翻——步 8 修过一次同样的错，
+ *    所以这里用 `hasOwnProperty` 判断，而不是 `error.code !== undefined`。
+ * 2. **只有 `AdapterError` 会被重造。** provider 的说法一律经它变成抛出物，
+ *    而我们自己代码里的 bug（例如 `decideFromMessage` 里那句"Core 违反了契约"）
+ *    不该被换成一个新对象——那会把真正的栈换掉，让一个内部错误看起来像
+ *    provider 的错误。
+ *
+ * 消息没变（大多数情况）时原样抛出，保住原始栈。
+ */
+function redactCause(error: unknown, redact: (text: string) => string): unknown {
+  if (!(error instanceof AdapterError)) return error;
+  const message = redact(error.message);
+  if (message === error.message) return error;
+  const hasCode = Object.prototype.hasOwnProperty.call(error, "code");
+  return new AdapterError({ code: hasCode ? (error.code as RunErrorCode) : null, message });
+}
+
+/**
  * 建一个 Pi 模型适配器。
  *
  * 返回的 `ModelPort` 只做三件事：组装请求、把 provider 的说法翻译成决策、
@@ -104,6 +141,8 @@ export function piModelAdapter(options: PiModelAdapterOptions): ModelPort {
   const systemPrompt = options.systemPrompt ?? buildSystemPrompt();
   const requestOptions = options.options ?? {};
   const onEvent = options.onEvent;
+  // 默认按本进程环境抹：不传它的时候，凭据仍然进不了日志（那条承诺不该依赖调用方）。
+  const redact = options.redact ?? redactor(secretsFromEnv(process.env));
 
   const identity = { api: model.api, provider: model.provider, model: model.id };
   const piTools: readonly PiTool[] = catalog.entries.map(toPiTool);
@@ -122,49 +161,57 @@ export function piModelAdapter(options: PiModelAdapterOptions): ModelPort {
     },
 
     async decide(state: AgentState, signal: AbortSignal): Promise<Decision> {
-      // 任务面的字段全部来自 Core 的投影；工具声明来自适配器的目录。
-      const request = buildRequest({
-        state,
-        availableTools: catalog.allNames,
-        identity,
-        tools: catalog.entries,
-        systemPrompt,
-      });
-
-      const context: PiContext = {
-        systemPrompt: request.systemPrompt,
-        messages: [...request.messages],
-        tools: [...piTools],
-      };
-
-      let final: AssistantMessage | null = null;
+      // 外层这一圈只做一件事：把**任何**从这轮里逃出来的失败抹一遍凭据。
+      // 它包住整轮（而不是只包流），因为 provider 的文本有两条出口——
+      // 流里的 `stopReason`（`decideFromMessage` 抛）与流外的抛出物（下一层抛），
+      // 漏掉任何一条，"凭据不进日志"就只成立一半。
       try {
-        const stream = models.streamSimple(model, context, {
-          ...requestOptions,
-          signal,
-          // 见文件头：重试只有一个所有者，就是 Runtime
-          maxRetries: 0,
+        // 任务面的字段全部来自 Core 的投影；工具声明来自适配器的目录。
+        const request = buildRequest({
+          state,
+          availableTools: catalog.allNames,
+          identity,
+          tools: catalog.entries,
+          systemPrompt,
         });
-        for await (const event of stream) {
-          onEvent?.(event);
-          if (event.type === "done") final = event.message;
-          else if (event.type === "error") final = event.error;
+
+        const context: PiContext = {
+          systemPrompt: request.systemPrompt,
+          messages: [...request.messages],
+          tools: [...piTools],
+        };
+
+        let final: AssistantMessage | null = null;
+        try {
+          const stream = models.streamSimple(model, context, {
+            ...requestOptions,
+            signal,
+            // 见文件头：重试只有一个所有者，就是 Runtime
+            maxRetries: 0,
+          });
+          for await (const event of stream) {
+            onEvent?.(event);
+            if (event.type === "done") final = event.message;
+            else if (event.type === "error") final = event.error;
+          }
+          // 流没有给出终态消息（理论上不会）：向它要最终结果
+          final ??= await stream.result();
+        } catch (error) {
+          // 抛在流外面的是传输层问题（连接、鉴权解析、provider 未注册）
+          throw adapterError(providerFailureFromThrow(error, signal));
         }
-        // 流没有给出终态消息（理论上不会）：向它要最终结果
-        final ??= await stream.result();
+
+        const message: AssistantMessage = final;
+        const entry = ledgers.get(signal);
+        if (entry !== undefined) {
+          // 记这一轮的账。空账本的第一次报账由 `UsageAccumulator` 处理成"替换"。
+          entry.usage.add(usageFromMessage(message));
+        }
+
+        return decideFromMessage(message, { clock, signal });
       } catch (error) {
-        // 抛在流外面的是传输层问题（连接、鉴权解析、provider 未注册）
-        throw adapterError(providerFailureFromThrow(error, signal));
+        throw redactCause(error, redact);
       }
-
-      const message: AssistantMessage = final;
-      const entry = ledgers.get(signal);
-      if (entry !== undefined) {
-        // 记这一轮的账。空账本的第一次报账由 `UsageAccumulator` 处理成"替换"。
-        entry.usage.add(usageFromMessage(message));
-      }
-
-      return decideFromMessage(message, { clock, signal });
     },
   };
 }

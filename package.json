@@ -5,6 +5,9 @@
   "type": "module",
   "description": "A TypeScript Agent Core and Runtime derived from first principles. The Pi Agent SDK is an adapter behind ports, never the architecture.",
   "license": "MIT",
+  "bin": {
+    "kuse": "./bin/kuse.mjs"
+  },
   "engines": {
     "node": ">=22"
   },

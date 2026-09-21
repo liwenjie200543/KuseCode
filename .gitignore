@@ -6,9 +6,17 @@ dist/
 coverage/
 *.tsbuildinfo
 
+# 本地工具装的技能与安装痕迹：与这个仓库的代码无关，谁装谁有，不入库。
+.claude/
+.install.log
+skills-lock.json
+
 # Run artifacts: event logs, traces and snapshots produced by real runs.
 # They are evidence, not source. Golden transcripts are committed explicitly.
 runs/
+# 演示脚本的**输出**每次都带着一个随机临时目录名，所以它不是可逐字节比对的东西。
+# 要提交的语料由步 10 的机制产出（`sequentialIds` + 归一化的路径），不是随手 `>` 出来的。
+examples/*.output.txt
 .env
 .env.*
 !.env.example

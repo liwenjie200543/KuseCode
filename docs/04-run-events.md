@@ -190,7 +190,7 @@ npm test
 |---|---|---|
 | 预算与取消的执法（`run_cancelled`、「中止后不再发起任何调用」） | step 5 | 本步只证明同一条 `signal` 被原样转交给模型与工具两端（有测试）；检查 `aborted` 的时机是下一脚的决定。**步 5 已落地**：交出去的信号变成「外部取消 + 墙钟」组合出来的那条，理由与证据在 `docs/05-budget-cancellation.md`。 |
 | `human_input_received` / `run_resumed` | 仍未发射 | 挂起怎么被叫醒要有「谁交回答案、怎么重新进入循环」的语义，本步没有恢复入口。**步 5/7 都没能落地它**：持久化与回放到了（步 7），但回放会**明确拒绝**这两条事件，因为把人的回答写进 `transcript`（`role: "human"`）的那一步状态推进还不存在——`reduce` 只接受决策（`docs/07-durability-replay.md` 边界决定 6）。 |
-| `usage_reported` | **step 8 已落地**，呈现留给 trace（步 9） | 载荷里的 token 数在步 8 之前不存在。Runtime 知道的 `toolCalls` / `durationMs` 会随 trace（步 9）呈现。**步 8 的补充**：它恰好发射一条（失败、取消路径上也有，因为一次失败的 Run 恰恰最想知道花了多少），且排在终态事件**之前**。 |
+| `usage_reported` | **step 8 已落地**，呈现落到 trace（**步 9 已落地**） | 载荷里的 token 数在步 8 之前不存在。Runtime 知道的 `toolCalls` / `durationMs` 由 trace 呈现。**步 8 的补充**：它恰好发射一条（失败、取消路径上也有，因为一次失败的 Run 恰恰最想知道花了多少），且排在终态事件**之前**。**步 9 的补充**：`traceOf` **不重算**任何一项——它读的就是这条事件的载荷，没有这条事件时答案是 `usage: null`（"这次 Run 没有账目"），不是自己算一个看起来差不多的数（`docs/09-cli-trace.md` 决定 7）。 |
 | 事件的持久化（一行一事件的 JSONL） | **step 7（已落地）** | 契约与内存实现在 `src/runtime/run-log.ts`，载体在 `src/store/run-log-jsonl.ts`。契约属于 Runtime，载体属于存储——而且**契约一行都没改**（`docs/07-durability-replay.md`）。 |
 | `sessionId` | **step 7（已落地）** | 事件基础字段里**仍然没有它**，这是刻意的（见下面第 3 条的追加）：它落在会话索引 `sessions/<sessionId>.json` 里，因为「这个 Run 属于哪个会话」是存储的问题，不是事件的问题。 |
 | `missingMaterial` 的填充 | step 6 | 见边界决定 5。**步 6 已落地**：`collectMissingMaterial(state)` 读三种缺失（观测带 error / 观测截断 / 有 `call_tool` 意图而无观测），与执行层的错误码住在同一个文件里——写侧与读侧必须是同一套判断（`docs/06-tool-execution.md` 边界决定 8）。 |
@@ -200,8 +200,8 @@ npm test
 1. **只有假通道。** 与本步的事件流对照的是脚本化的决策与工具桩，
    真实 provider 的方差、协议差异、凭据问题一概还没遇到。**步 8 之后仍然如此**：适配器已经接在真的 `pi-ai` 流上（真注册、真 auth 解析、真 `AssistantMessageEventStream`），但「模型」是 SDK 自带的 faux provider——真凭据那条路径（`envModelIdentity()`）写好了、一次都没跑过（`docs/08` 局限一）。
 2. **`run_started` 不带 `task`。** 步 2 定的词汇如此，所以单看事件流还看不出这次 Run
-   在做什么——那个问题的答案在 `Task` 的持久化（步 7）与 trace（步 9），
-   本步不擅自往事件里塞字段。
+   在做什么——那个问题的答案在 `Task` 的持久化（步 7）与 trace（**步 9 已落地**，
+   由 `--json` 的 `trace` 与人类可读的三个段落给出），本步不擅自往事件里塞字段。
    *（步 7 的追加：答案落在会话索引里——`sessions/<sessionId>.json` 存着每个 Run 的
    `Task`。需要它的地方正是回放：`replayAgentState(events, task)` 的第一个动作就是
    用这个 `Task` 构造初始状态。存储因此只存「日志答不出来的东西」。）*
