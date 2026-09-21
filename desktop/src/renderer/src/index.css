@@ -1,0 +1,65 @@
+:root {
+  color-scheme: light dark;
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f6f7f9;
+  color: #1c1e21;
+}
+
+.shell {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+h1 {
+  font-size: 22px;
+  margin: 0 0 4px;
+}
+
+.subtitle {
+  color: #65676b;
+  margin: 0 0 24px;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #e2e4e8;
+  border-radius: 10px;
+  padding: 16px 20px;
+}
+
+.card h2 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
+.ok {
+  color: #1a7f37;
+}
+
+.error {
+  color: #c62828;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #1b1d21;
+    color: #e8eaed;
+  }
+  .card {
+    background: #24262b;
+    border-color: #3a3d44;
+  }
+  .subtitle {
+    color: #9aa0a6;
+  }
+}
