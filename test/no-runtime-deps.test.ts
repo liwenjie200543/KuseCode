@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -57,6 +57,23 @@ function listTsFiles(dir: string): string[] {
     else if (entry.name.endsWith(".ts")) out.push(full);
   }
   return out;
+}
+
+/**
+ * 接受文件或目录；路径尚不存在时返回空。
+ *
+ * SDD 重构（docs/sdd/04-implementation-plan.md T1）把**尚未创建**的模块提前
+ * 登记进禁线扫描——「登记即承诺」：文件一旦出现，约束当场生效，不需要谁记得
+ * 回来补检查。空列表不是豁免：`has files to check` 在模块落地之后自然会绿。
+ */
+function listTsPaths(path: string): string[] {
+  let stat: import("node:fs").Stats;
+  try {
+    stat = statSync(path);
+  } catch {
+    return [];
+  }
+  return stat.isDirectory() ? listTsFiles(path) : [path];
 }
 
 /** 抽出源码里所有模块引用：静态、副作用、动态、require。 */
@@ -188,12 +205,13 @@ describe("产品面在最上面：下面各层不许回头 import 它", () => {
   // （包括 CLI）聚合起来再交出去。把它算进来，这条检查就变成了"谁也不许导出 CLI"，
   // 那是另一条规矩，而且是错的。要守的是**方向**——层里的人不能回头望，
   // 站在最上面的出口不算"下面某一层"。
-  const layers = ["core", "runtime", "store", "tools", "adapter", "testing"];
+  const layers = ["core", "runtime", "store", "tools", "adapter", "testing", "bootstrap", "config"];
 
-  it("src/{core,runtime,store,tools,adapter,testing} 里没有任何一条 import 指向 src/cli", () => {
+  it("src/{core,runtime,store,tools,adapter,testing,bootstrap,config} 里没有任何一条 import 指向 src/cli", () => {
     const offenders: string[] = [];
     for (const layer of layers) {
-      for (const file of listTsFiles(join(srcDir, layer))) {
+      // 登记即承诺：bootstrap/config 尚未创建时这里得到空列表，落地后自动被扫。
+      for (const file of listTsPaths(join(srcDir, layer))) {
         const relative = file.slice(repoRoot.length).replace(/\\/g, "/");
         for (const spec of importSpecifiers(readFileSync(file, "utf8"))) {
           const target = spec.startsWith(".")
@@ -273,6 +291,62 @@ describe("SDK 只住在适配器里", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// SDD 重构（docs/sdd/03-architecture.md §2）为新增模块登记的禁线。
+//
+// 这些模块此刻还不存在——登记即承诺：文件一落地，约束当场生效。
+// 三条与既有 describe 的差别只在被扫的对象，判据本身都是仓库里已有的立场：
+//
+//   1. `src/config` 与 `src/toolbox.ts`：纯函数模块，与 Core/假适配器同级——
+//      不碰 node:、不碰任何包（NFR-5「零新增生产依赖」的可执行形式）。
+//   2. `src/bootstrap`：装配层。它要建数据目录，所以 node: 对它放行
+//      （与 cli 同一性质：产品面附近的一层）；但它**自己**不许 import 任何包
+//      ——SDK 只能经 adapter 间接进来，第三方（zod 之类）根本不该存在。
+// ---------------------------------------------------------------------------
+
+/** 不碰 node:、只许相对引用且留在 src 之内的模块（判据同「SDK 只住在适配器里」）。 */
+const PURE_MODULES: readonly string[] = ["src/config", "src/toolbox.ts"];
+
+/** 不碰包（node: 放行）的模块（判据同 bootstrap 的装配层定位）。 */
+const PACKAGE_FREE_MODULES: readonly string[] = ["src/bootstrap"];
+
+describe("SDD 禁线：新增模块的依赖方向（登记即承诺）", () => {
+  it("登记的纯函数模块已经落地（落地后本行必须绿）", () => {
+    const missing = PURE_MODULES.filter((p) => listTsPaths(join(repoRoot, p)).length === 0);
+    // T3/T11 落地之前这里允许为空；T17 收尾时该断言收紧为 toEqual([])。
+    expect(missing.length).toBeLessThanOrEqual(PURE_MODULES.length);
+  });
+
+  for (const path of PURE_MODULES) {
+    it(`${path} 不引用 node: 内置模块、不引用任何包`, () => {
+      for (const file of listTsPaths(join(repoRoot, path))) {
+        for (const spec of importSpecifiers(readFileSync(file, "utf8"))) {
+          const relative = file.slice(repoRoot.length);
+          expect(spec.startsWith("node:"), `${relative} 引用了 Node 内置模块：${spec}`).toBe(false);
+          expect(spec.startsWith("."), `${relative} 引用了包：${spec}`).toBe(true);
+          expect(
+            resolve(dirname(file), spec).startsWith(srcDir),
+            `${relative} 越出了 src：${spec}`,
+          ).toBe(true);
+        }
+      }
+    });
+  }
+
+  for (const path of PACKAGE_FREE_MODULES) {
+    it(`${path} 不 import 任何包（node: 放行——装配层要碰数据目录）`, () => {
+      for (const file of listTsPaths(join(repoRoot, path))) {
+        for (const spec of importSpecifiers(readFileSync(file, "utf8"))) {
+          const relative = file.slice(repoRoot.length);
+          expect(
+            spec.startsWith(".") || spec.startsWith("node:"),
+            `${relative} 引用了包：${spec}（SDK 只能经 adapter 间接进来）`,
+          ).toBe(true);
+        }
+      }
+    });
+  }
+});
 // ---------------------------------------------------------------------------
 // 循环测试的纯度。
 // 「Core 在没有进程、网络、数据库的情况下跑完」这句话的证据是 test/core-loop.test.ts，
