@@ -172,10 +172,12 @@ describe("I/O 只住在存储层", () => {
         // `src/store`：事件的载体（步 7）
         // `src/tools`：真实工具真的去读文件系统（步 8）——它就是"材料从哪来"的答案
         // `src/cli`：产品面就是进程本身（步 9）——它读 argv、写 stdout、接 SIGINT
+        // `src/bootstrap`：装配层（SDD T12）——它要算数据目录与仓库的相对位置
         if (
           relative.startsWith("src/store/") ||
           relative.startsWith("src/tools/") ||
-          relative.startsWith("src/cli/")
+          relative.startsWith("src/cli/") ||
+          relative.startsWith("src/bootstrap/")
         ) {
           continue;
         }

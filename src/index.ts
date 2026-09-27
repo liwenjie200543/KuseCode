@@ -92,6 +92,11 @@ export type {
 export { ConfigError, configFromEnv, defaultConfig, mergeConfig, parseConfigFile } from "./config/loader.js";
 export type { DeepPartial, KuseConfig } from "./config/schema.js";
 
+// 装配层（SDD T12）：产品面的唯一接线点。SDK 在这里被动态加载；
+// trace/sessions/audit 三个只读门面不触发加载。
+export { createKuse, storeInsideRepo } from "./bootstrap/index.js";
+export type { Kuse, KuseOptions, RunFinished, RunHandle, StartRunInput } from "./bootstrap/index.js";
+
 // 用量账目的算术。它在 Core 里，因为 `ModelUsage` 是 Core 的类型——
 // 而"`null` 不是加法单位元"这条规则只该有**一份**（步 8 在适配器与假模型里
 // 各写一次，于是账本永远是未知；见 `docs/08` 决定 6）。
