@@ -28,6 +28,13 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { EXIT, HELP, flagOn, flagValue, main, parseArgs, unknownFlags } from "../src/cli/index.js";
 import type { CliIo } from "../src/cli/index.js";
 import { REDACTED } from "../src/core/redact.js";
+import type { AgentEvent, Decision, Task } from "../src/core/types.js";
+import { sequentialIds } from "../src/runtime/ids.js";
+import { createRuntime } from "../src/runtime/run-agent.js";
+import { collectMissingMaterial, createToolRunner } from "../src/runtime/tool-runner.js";
+import { createSessionStore } from "../src/store/session-store.js";
+import { scriptedModel } from "../src/testing/fake-model.js";
+import { fakeClock, fakeTools } from "../src/testing/fake-tools.js";
 
 // SDD T2（docs/sdd/04-implementation-plan.md）：这个文件**不**依赖 dist——
 // `main(argv, io)` 在进程内直接跑 TS 源码（rm -rf dist 后 42/42 全绿，实测）。
@@ -681,5 +688,105 @@ describe("任务文本可以从 stdin 来", () => {
     // 免责说明（那是刻意固定的），不该拿它来认任务文本。
     expect(trace.steps[1]?.tool).toBe("search_text");
     expect(trace.steps[1]?.args["pattern"]).toBe("TODO");
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// 四、kuse answer：挂起 → 应答 → 恢复（SDD T14）
+// ---------------------------------------------------------------------------
+
+describe("kuse answer", () => {
+  /** 用脚本化模型把一次 Run 挂在"等人"侧（真实 store + 真实日志文件）。 */
+  async function hangRun(storeDir: string): Promise<{ sessionId: string; runId: string }> {
+    const askHuman: Decision = { kind: "ask_human", question: "要我看哪个文件？" };
+    const store = createSessionStore({
+      rootDir: storeDir,
+      ids: sequentialIds("t"),
+      clock: fakeClock(),
+    });
+    const session = await store.createSession();
+    const task: Task = {
+      id: `task_${session.id}`,
+      goal: "这个仓库里有哪些 TODO？",
+      repoRoot: join(base, "repo"),
+      checks: [],
+    };
+    const started = await store.startRun(session.id, task);
+    const runner = createToolRunner({ tools: fakeTools({ read_file: { value: "x", error: null } }), clock: fakeClock() });
+    const runtime = createRuntime({
+      model: scriptedModel([askHuman]),
+      ...runner.toolDeps(),
+      log: started.log,
+      ids: started.ids,
+      clock: fakeClock(),
+      modelName: "fake-model",
+      collectMissingMaterial,
+    });
+    const events: AgentEvent[] = [];
+    for await (const event of runtime.run(task)) events.push(event);
+    expect(events.at(-1)?.type).toBe("human_input_requested");
+    return { sessionId: session.id, runId: started.runId };
+  }
+
+  it("回答写入后 Run 继续到 complete；退出码与 run 同一张表", async () => {
+    const storeDir = join(base, "answer-store");
+    await mkdir(storeDir, { recursive: true });
+    const hung = await hangRun(storeDir);
+
+    const { code, outText, errText } = await cli([
+      "answer",
+      hung.sessionId,
+      hung.runId,
+      "看 README.md",
+      "--store",
+      storeDir,
+      "--repo",
+      join(base, "repo"),
+      "--model",
+      "faux",
+    ]);
+
+    expect(errText()).toContain("回答已写入");
+    expect(code).toBe(EXIT.complete);
+    expect(outText()).toContain("调用了什么"); // answer 的结论呈现与 run 同形状
+  });
+
+  it("指向不存在的 Run → 2（用法错误），不虚报成内部错误", async () => {
+    const { code, errText } = await cli([
+      "answer",
+      "no-session",
+      "no-run",
+      "回答",
+      "--store",
+      join(base, "answer-store"),
+      "--repo",
+      join(base, "repo"),
+      "--model",
+      "faux",
+    ]);
+
+    expect(code).toBe(EXIT.usage);
+    expect(errText()).toContain("没有 Run");
+  });
+
+  it("回答为空 → 2，用法提示说清要什么", async () => {
+    // 独立数据目录：顺序 id 的 runId 在共享目录里会撞上第一条用例的日志。
+    const storeDir = join(base, "answer-store-empty");
+    await mkdir(storeDir, { recursive: true });
+    const hung = await hangRun(storeDir);
+
+    const { code, errText } = await cli([
+      "answer",
+      hung.sessionId,
+      hung.runId,
+      "--store",
+      storeDir,
+      "--model",
+      "faux",
+    ]);
+
+    expect(code).toBe(EXIT.usage);
+    expect(errText()).toContain("用法：kuse answer");
   });
 });

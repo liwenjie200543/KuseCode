@@ -162,6 +162,8 @@ export const HELP = `kuse —— 一次 Run 说过什么、为什么停、花了
 
 用法
   kuse run [任务...] [选项]          跑一次 Run，打印结论与 trace
+  kuse answer <sessionId> <runId>
+            <回答文本>               回答一次挂起的 Run，从恢复点继续到终态
   kuse trace <sessionId> <runId>     打印一次已有 Run 的 trace（不重跑）
   kuse runs <sessionId>              列出这个会话里的 Run
   kuse sessions                      列出这个存储目录里的会话
@@ -178,6 +180,10 @@ run 的选项
   --json             stdout 只输出一个 JSON 对象（进度走 stderr）
   --quiet            不打印进度
   -h, --help         显示帮助
+
+answer 的选项
+  与 run 共用 --repo / --store / --model / --offline / --pattern / --json / --quiet。
+  恢复段用**同一套模型配置**；回答文本作为位置参数给出（引号括起可带空格）。
 
 任务文本
   位置参数拼起来就是任务；什么都不给则从 stdin 读（管道用）。

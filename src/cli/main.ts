@@ -33,10 +33,12 @@ import process from "node:process";
 import { redactor, secretsFromEnv } from "../core/redact.js";
 import { traceOf } from "../runtime/trace.js";
 import type { RunTrace } from "../runtime/trace.js";
+import type { EvidenceAudit } from "../runtime/verify.js";
 import { createSessionStore } from "../store/session-store.js";
 import type { SessionStore } from "../store/session-store.js";
 import { ConfigError, defaultConfig, mergeConfig, parseConfigFile } from "../config/loader.js";
 import type { DeepPartial, KuseConfig } from "../config/schema.js";
+import { ResumeError } from "../runtime/run-agent.js";
 import { createKuse } from "../bootstrap/index.js";
 import type { RunHandle } from "../bootstrap/index.js";
 import { EXIT, HELP, flagOn, flagValue, flagsMissingValue, parseArgs, unknownFlags } from "./args.js";
@@ -71,6 +73,7 @@ interface RunOptions {
 }
 
 const RUN_FLAGS = ["repo", "store", "model", "session", "pattern", "json", "quiet", "offline", "help", "h"];
+const ANSWER_FLAGS = ["repo", "store", "model", "pattern", "json", "quiet", "offline", "help", "h"];
 const READ_FLAGS = ["store", "json", "help", "h"];
 
 /**
@@ -202,6 +205,81 @@ async function loadRepoConfig(repo: string): Promise<{
   }
 }
 
+/**
+ * flag/env/file 三层的配置与模型解析——`run` 与 `answer` 共用（SDD T14）。
+ * 返回 `null` 表示已经打过用法错误（配置坏 / 没有模型），调用方直接返回退出码。
+ */
+async function resolveRunConfig(
+  repo: string,
+  modelFlag: string | null,
+  io: CliIo,
+): Promise<{ readonly config: KuseConfig; readonly modelSpec: string } | null> {
+  const repoConfig = await loadRepoConfig(repo);
+  if (repoConfig.usageError !== null) {
+    usage(io, repoConfig.usageError);
+    return null;
+  }
+  for (const warning of repoConfig.warnings) io.err(`kuse: 配置警告：${warning}`);
+  const config = mergeConfig([
+    modelFlag === null ? null : { model: modelFlag },
+    repoConfig.config,
+    defaultConfig(),
+  ]);
+  const modelSpec = modelFlag ?? config.model;
+  if (modelSpec === null) {
+    usage(
+      io,
+      "没有模型。用 --model faux 跑离线冒烟，或者设 KUSECODE_MODEL=provider/model。" +
+        "（凭据从环境解析，绝不写进这个仓库。）",
+    );
+    return null;
+  }
+  return { config, modelSpec };
+}
+
+/** 结果渲染：json / 明文两种形状 + 退出码行。`run` 与 `answer` 共用。 */
+function renderRunResult(
+  io: CliIo,
+  args: {
+    readonly json: boolean;
+    readonly storeDir: string;
+    readonly sessionId: string;
+    readonly runId: string;
+    readonly offline: boolean;
+    readonly modelSpec: string;
+    /** 明文表头的附加行（run 有"仓库"，answer 没有）。 */
+    readonly header?: readonly string[];
+  },
+  trace: RunTrace,
+  audit: EvidenceAudit | null,
+  code: number,
+): void {
+  if (args.json) {
+    io.out(
+      JSON.stringify(
+        {
+          sessionId: args.sessionId,
+          storeDir: args.storeDir,
+          eventsPath: `${args.storeDir}/${args.runId}/events.jsonl`,
+          offline: args.offline,
+          trace,
+          audit,
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    const body = traceLines(trace, audit, [
+      `会话   ${args.sessionId}`,
+      `Run    ${args.runId}`,
+      `模型   ${trace.model ?? args.modelSpec}${args.offline ? "（离线冒烟）" : ""}`,
+      `日志   ${args.storeDir}/${args.runId}/events.jsonl`,
+    ]).join("\n");
+    io.out(body);
+  }
+  io.err(exitLine(code));
+}
 // ---------------------------------------------------------------------------
 // kuse run
 // ---------------------------------------------------------------------------
@@ -217,23 +295,9 @@ async function commandRun(args: ParsedArgs, io: CliIo): Promise<number> {
 
   // 配置四层（Spec FR-5）：flag（env 折叠在 parseRun 里）> 仓库配置文件 > 默认。
   // 覆盖必须可见：文件的警告（未知键/疑似凭据）原样印到 stderr。
-  const repoConfig = await loadRepoConfig(options.repo);
-  if (repoConfig.usageError !== null) return usage(io, repoConfig.usageError);
-  for (const warning of repoConfig.warnings) io.err(`kuse: 配置警告：${warning}`);
-  const config = mergeConfig([
-    options.model === null ? null : { model: options.model },
-    repoConfig.config,
-    defaultConfig(),
-  ]);
-  // 模型的来源：flag/env 优先，其次配置文件。都没有才是"没有模型"。
-  const modelSpec = options.model ?? config.model;
-  if (modelSpec === null) {
-    return usage(
-      io,
-      "没有模型。用 --model faux 跑离线冒烟，或者设 KUSECODE_MODEL=provider/model。" +
-        "（凭据从环境解析，绝不写进这个仓库。）",
-    );
-  }
+  const resolved = await resolveRunConfig(options.repo, options.model, io);
+  if (resolved === null) return EXIT.usage;
+  const { config, modelSpec } = resolved;
 
   // 装配层是唯一接线点（SDD T12/T13）：toolbox → 模型 → store → runtime 的线
   // 只存在于 createKuse 里。这里只剩参数翻译与结果呈现。
@@ -280,32 +344,101 @@ async function commandRun(args: ParsedArgs, io: CliIo): Promise<number> {
   const { trace, audit } = await handle.finished;
   const code = exitCodeFor(trace);
 
-  if (options.json) {
-    io.out(
-      JSON.stringify(
-        {
-          sessionId,
-          storeDir: options.store,
-          eventsPath: `${options.store}/${runId}/events.jsonl`,
-          offline,
-          trace,
-          audit,
-        },
-        null,
-        2,
-      ),
-    );
-  } else {
-    const body = traceLines(trace, audit, [
-      `仓库   ${options.repo}`,
-      `会话   ${sessionId}`,
-      `Run    ${runId}`,
-      `模型   ${trace.model ?? modelSpec}${offline ? "（离线冒烟）" : ""}`,
-      `日志   ${options.store}/${runId}/events.jsonl`,
-    ]).join("\n");
-    io.out(body);
+  renderRunResult(
+    io,
+    {
+      json: options.json,
+      storeDir: options.store,
+      sessionId,
+      runId,
+      offline,
+      modelSpec,
+      header: [`仓库   ${options.repo}`],
+    },
+    trace,
+    audit,
+    code,
+  );
+
+  return code;
+}
+
+// ---------------------------------------------------------------------------
+// kuse answer：挂起 → 应答 → 恢复（SDD T14）
+// ---------------------------------------------------------------------------
+
+/**
+ * 回答一次挂起的 Run。答案与"继续"作为事件**追加**进原日志，循环从恢复点继续，
+ * 终态退出码与 `run` 完全同一张表——脚本因此能用同一套逻辑处理两段。
+ */
+async function commandAnswer(args: ParsedArgs, io: CliIo): Promise<number> {
+  if (rejectUnknown(args, io, ANSWER_FLAGS)) return EXIT.usage;
+  if (rejectMissingValue(args, io)) return EXIT.usage;
+
+  const [sessionId, runId, ...answerParts] = args.positionals;
+  if (sessionId === undefined || runId === undefined || answerParts.length === 0) {
+    return usage(io, "用法：kuse answer <sessionId> <runId> <回答文本>");
   }
-  io.err(exitLine(code));
+  const answer = answerParts.join(" ").trim();
+  if (answer.length === 0) {
+    return usage(io, "回答是空的：没有内容的回答无法写进 transcript。");
+  }
+
+  const storeDir = resolve(io.cwd, flagValue(args, "store") ?? "runs");
+  const repo = resolve(io.cwd, flagValue(args, "repo") ?? ".");
+  const offline = flagOn(args, "offline");
+  const modelFlag = offline
+    ? "faux"
+    : (flagValue(args, "model") ?? io.env["KUSECODE_MODEL"]?.trim() ?? null);
+
+  const resolved = await resolveRunConfig(repo, modelFlag, io);
+  if (resolved === null) return EXIT.usage;
+  const { config, modelSpec } = resolved;
+
+  const kuse = createKuse({ repoRoot: repo, config, dataRoot: storeDir });
+  let handle: RunHandle;
+  try {
+    handle = await kuse.answer(sessionId, runId, answer, io.signal);
+  } catch (error) {
+    // 类型化拒绝（FR-2.6）→ 退出码：找不到/没挂起/空回答是**用法错误**（Run 没开始）；
+    // 日志坏了是**内部错误**（连"发生了什么"都答不出来）。
+    if (error instanceof ResumeError) {
+      if (error.code === "log_corrupted") {
+        io.err(`kuse: 内部错误：${error.message}`);
+        return EXIT.internal;
+      }
+      return usage(io, error.message);
+    }
+    throw error;
+  }
+
+  const quiet = flagOn(args, "quiet");
+  if (!quiet) {
+    io.err(`kuse: 回答已写入 ${storeDir}/${handle.runId}/events.jsonl，Run 从恢复点继续`);
+  }
+
+  for await (const event of handle.events) {
+    if (quiet || flagOn(args, "json")) continue;
+    const line = progressLine(event);
+    if (line !== null) io.err(line);
+  }
+
+  const { trace, audit } = await handle.finished;
+  const code = exitCodeFor(trace);
+  renderRunResult(
+    io,
+    {
+      json: flagOn(args, "json"),
+      storeDir,
+      sessionId: handle.sessionId,
+      runId: handle.runId,
+      offline: modelSpec === "faux",
+      modelSpec,
+    },
+    trace,
+    audit,
+    code,
+  );
 
   return code;
 }
@@ -467,6 +600,8 @@ async function dispatch(argv: readonly string[], io: CliIo): Promise<number> {
         // `commandRun` 内部在**校验全部通过之后**才去拉 SDK（见那里的注释）：
         // 一次用法错误不该为建 provider 目录那一秒付钱。
         return await commandRun(args, io);
+      case "answer":
+        return await commandAnswer(args, io);
       case "trace":
         return await commandTrace(args, io);
       case "runs":
