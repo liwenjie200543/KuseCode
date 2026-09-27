@@ -23,7 +23,7 @@
 | T6 | token 预算默认设防 | 见 T6 commit | ✅（spec 声明的唯一默认行为变化） |
 | T7 | `reduceHumanInput`（Core 恢复推进） | 见 T7 commit | ✅ |
 | T8 | 回放激活恢复事件 | 见 T8 commit | ✅ |
-| T9 | `Runtime.resume` | — | ⬜ |
+| T9 | `Runtime.resume` | 见 T9 commit | ✅（拒绝在调用点同步发生，先于一切写入） |
 | T10 | golden 挂起-恢复固定件 | — | ⬜ |
 | T11 | Toolbox 升格为通用组装点 | — | ⬜ |
 | T12 | 装配层 `src/bootstrap/`（createKuse） | — | ⬜ |

@@ -26,7 +26,7 @@
  * 三件事都在这一侧，因为它们回答的都是「这次 Run 怎么发生」。
  */
 
-import { isTerminal, runCoreLoop } from "../core/loop.js";
+import { isTerminal, reduceHumanInput, runCoreLoop } from "../core/loop.js";
 import type { AssembleObservation, LoopDeps, TerminalDecision } from "../core/loop.js";
 import type {
   AgentEvent,
@@ -35,6 +35,7 @@ import type {
   ModelPort,
   ModelUsage,
   ModelUsageLedger,
+  ResumeInput,
   RunBudget,
   RunErrorCode,
   Task,
@@ -47,6 +48,11 @@ import type { IdFactory } from "./ids.js";
 import { retryDelayMs, retryPolicyFrom, shouldRetry } from "./retry.js";
 import type { RetryPolicy } from "./retry.js";
 import type { RunLog } from "./run-log.js";
+// 与 replay.js 的相互引用是**延迟的**：两边都只在函数体内调用对方，
+// 模块求值期没有任何一方碰对方的名字——ESM 的活绑定让这件事成立。
+// replay 需要 emptyStateFor（"初始状态长什么样"住在 Runtime），
+// resume 需要回放（"从事件重建状态"住在 replay）。
+import { assertContiguousPrefix, replayAgentState, runStatusOf } from "./replay.js";
 import { createRunSignal } from "./termination.js";
 import type { TimeoutSignalFactory } from "./termination.js";
 
@@ -59,6 +65,143 @@ import type { TimeoutSignalFactory } from "./termination.js";
  */
 function usageOf(ledger: ModelUsageLedger | null): ModelUsage {
   return ledger?.usage() ?? { inputTokens: null, outputTokens: null };
+}
+
+// ---------------------------------------------------------------------------
+// 恢复（SDD T9，docs/sdd/03-architecture.md §4.2）
+// ---------------------------------------------------------------------------
+
+/**
+ * 恢复入口的类型化拒绝（Spec FR-2.6）。
+ *
+ * 四个码各答一个"为什么不能恢复"；`session_mismatch`（架构文档原稿列了五个）
+ * 并进 `run_not_found`：会话与 Run 的对应关系由存储层核对，`recover` 返回 null
+ * 时调用方无从分辨也不必分辨——两个码说的是同一件事。
+ *
+ * **校验先于写入**：任何拒绝都发生在第一条新事件之前。失败不留痕，与
+ * 「被拦下的调用不留 `tool_started`」是同一条纪律。
+ */
+export type ResumeErrorCode =
+  | "run_not_found"
+  | "not_awaiting_human"
+  | "empty_answer"
+  | "log_corrupted";
+
+export class ResumeError extends Error {
+  readonly code: ResumeErrorCode;
+
+  constructor(code: ResumeErrorCode, message: string) {
+    super(message);
+    this.name = "ResumeError";
+    this.code = code;
+  }
+}
+
+/** 既有日志里能读回的、挂起前的账目（`usage_reported` 载荷的子集）。 */
+interface PreUsage {
+  readonly inputTokens: number | null;
+  readonly outputTokens: number | null;
+  readonly toolCalls: number;
+}
+
+/** 校验通过后的恢复起点：重建的挂起状态、挂起前的账目、原 run_started 的时刻。 */
+interface ValidatedResume {
+  readonly state: AgentState;
+  readonly preUsage: PreUsage;
+  readonly runStartedAt: number;
+}
+
+/**
+ * 校验恢复输入，返回重建出的挂起状态与挂起前的账目。
+ *
+ * 顺序即归因的优先级：先答"这个 Run 存在吗"，再答"它挂着吗"，最后才谈
+ * "日志有没有坏"。每一条失败都是 `ResumeError`，不是裸异常。
+ */
+function validateResumeInput(input: ResumeInput): ValidatedResume {
+  if (input.answer.trim().length === 0) {
+    throw new ResumeError("empty_answer", "人的回答是空的：没有内容的回答无法写进 transcript");
+  }
+  if (input.events.length === 0) {
+    throw new ResumeError("run_not_found", `没有找到 Run ${input.runId} 的事件日志：一条事件都没有`);
+  }
+
+  try {
+    assertContiguousPrefix(input.events);
+  } catch (error) {
+    throw new ResumeError("log_corrupted", error instanceof Error ? error.message : String(error));
+  }
+  for (const event of input.events) {
+    if (event.runId !== input.runId) {
+      throw new ResumeError(
+        "log_corrupted",
+        `事件流里混入了别的 Run 的事件（${event.runId}）：要恢复的是 ${input.runId}`,
+      );
+    }
+  }
+  const first = input.events[0];
+  if (first === undefined || first.type !== "run_started") {
+    throw new ResumeError("log_corrupted", `事件流必须从 run_started 开始，实际从 ${first?.type ?? "空"} 开始`);
+  }
+
+  const status = runStatusOf(input.events);
+  if (status !== "awaiting_human") {
+    throw new ResumeError(
+      "not_awaiting_human",
+      `Run ${input.runId} 停在 ${status}，不是 awaiting_human：只有挂起在人类那侧的 Run 才能恢复`,
+    );
+  }
+
+  let state: AgentState;
+  try {
+    state = replayAgentState(input.events, input.task);
+  } catch (error) {
+    throw new ResumeError("log_corrupted", error instanceof Error ? error.message : String(error));
+  }
+  if (state.pendingQuestion === null) {
+    throw new ResumeError(
+      "log_corrupted",
+      `日志说这次 Run 挂起了，状态里却没有待答的问题：这份日志自己矛盾`,
+    );
+  }
+
+  // 挂起路径在 `human_input_requested` 之前**总是**报过一次账，所以这里
+  // 通常找得到；找不到（旧格式、或被拦在更早的位置）就把前段账目记成
+  // **未知**（不是没有前段——前段一定存在，只是它花了多少不知道）。
+  let preUsage: PreUsage = { inputTokens: null, outputTokens: null, toolCalls: 0 };
+  for (const event of input.events) {
+    if (event.type === "usage_reported") {
+      preUsage = {
+        inputTokens: event.usage.inputTokens,
+        outputTokens: event.usage.outputTokens,
+        toolCalls: event.usage.toolCalls,
+      };
+    }
+  }
+
+  return { state, preUsage, runStartedAt: first.timestamp };
+}
+
+/**
+ * 两段账目合成累计账。`pre` 为 null 的唯一含义是"没有前段"（新 Run）——
+ * 累计就是本段。前段存在但账目未知（provider 没报）时做 null 传播：
+ * **未知 + 已知 = 未知**，`null` 不是加法单位元（`docs/08` 决定 6 的同一条
+ * 规则）——把挂起前那段当成零，等于让总额看起来比事实更确定。
+ */
+function cumulativeUsage(
+  pre: PreUsage | null,
+  segment: ModelUsage,
+): { readonly inputTokens: number | null; readonly outputTokens: number | null } {
+  if (pre === null) return segment;
+  return {
+    inputTokens:
+      pre.inputTokens === null || segment.inputTokens === null
+        ? null
+        : pre.inputTokens + segment.inputTokens,
+    outputTokens:
+      pre.outputTokens === null || segment.outputTokens === null
+        ? null
+        : pre.outputTokens + segment.outputTokens,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -259,8 +402,24 @@ export function createRuntime(options: RunAgentOptions): AgentRuntime {
   const budget = options.budget ?? DEFAULT_BUDGET;
   const sleep = options.sleep ?? defaultSleep;
 
-  async function* run(task: Task, signal?: AbortSignal): AsyncGenerator<AgentEvent, void, void> {
-    const runId = ids.runId();
+  /**
+   * 一次 Run 的驱动体（SDD T9 之后由 `run` 与 `resume` 共用）。
+   *
+   * `fresh`：新 Run——身份新造、状态从空开始、`sequence` 从 0 起算。
+   * `resume`：恢复——身份沿用、状态从回放重建、`sequence` 接在既有日志之后；
+   * 恢复不是第二条代码路径，是同一条路径的新起点：信号、守卫、账本、
+   * write-ahead 队列、终态完备性，全部是同一套机制。
+   */
+  async function* drive(
+    task: Task,
+    init:
+      | { readonly kind: "fresh" }
+      | { readonly kind: "resume"; readonly input: ResumeInput; readonly validated: ValidatedResume },
+    signal?: AbortSignal,
+  ): AsyncGenerator<AgentEvent, void, void> {
+    // resume 的校验发生在**调用点**（见下面 resume 包装函数）：生成器体的第一行
+    // 执行时，校验早已通过——任何拒绝都发生在第一条新事件、乃至第一次迭代之前。
+    const runId = init.kind === "resume" ? init.input.runId : ids.runId();
 
     // 这次 Run 的信号：外部取消与墙钟的合流。调用方没传就只剩墙钟；两条都没有时
     // 它是一条永不中止的信号——「这条 Run 不会因信号而停」是显式写下的，
@@ -298,8 +457,13 @@ export function createRuntime(options: RunAgentOptions): AgentRuntime {
     let runStartedAt = 0;
     const retry = retryPolicyFrom(budget.maxRetries, options.retry ?? {});
 
-    let sequence = 0;
-    let state = emptyStateFor(task);
+    /**
+     * `sequence` 的起点：新 Run 从 0 起算；恢复**接在既有日志之后**——
+     * append-only 的连续性检查（`assertAppendOnly`）因此天然通过。
+     */
+    let sequence = init.kind === "resume" ? init.input.events.length : 0;
+    /** 恢复时：回放重建出的挂起状态（人的回答尚未入 transcript）。 */
+    let state = init.kind === "resume" ? init.validated.state : emptyStateFor(task);
     let lastTerminal: TerminalDecision | null = null;
     /**
      * 这次 Run 是否已经走到一个**我们自己选择的停点**：收工、失败、挂起等人，
@@ -311,8 +475,17 @@ export function createRuntime(options: RunAgentOptions): AgentRuntime {
      * 而「没有结尾」与「崩了」在回放看来是同一件事。
      */
     let settled = false;
-    /** 账目是否已经报过（见 `emitUsage` 的幂等闸门）。 */
+    /** 账目是否已经报过（见 `emitUsage` 的幂等闸门）。
+     *
+     * 恢复段有自己的闸门：挂起前的账已经在日志里（那次报账发生在挂起段），
+     * 恢复段在**自己的**终态路径上报一次**累计**账——日志里于是有两条
+     * `usage_reported`，最后一条是权威总额（trace 读最后一条）。段的幂等
+     * 保证的是"同一段不会报两次账"，而不是"整次 Run 只能有一条"。
+     */
     let usageEmitted = false;
+    /** 挂起前的账目与工具次数（恢复段才有效；新 Run 是 null/0）。 */
+    const preUsage = init.kind === "resume" ? init.validated.preUsage : null;
+    const preToolCalls = preUsage?.toolCalls ?? 0;
     let pendingTool: { readonly id: string; readonly name: string; readonly startedAt: number } | null =
       null;
 
@@ -427,18 +600,21 @@ export function createRuntime(options: RunAgentOptions): AgentRuntime {
      * 影响终态判定，同时让"钱花了多少"先于"为什么停"出现。
      */
     const emitUsage = async (): Promise<void> => {
-      // 幂等：一次 Run 里 `usage_reported` 恰好一条。没有这个闸门，一条 success 路径
+      // 幂等：一个段里 `usage_reported` 恰好一条。没有这个闸门，一条 success 路径
       // 之后如果终态事件本身写失败，`catch` 会让 `emitStop` 再报一次账——
       // 于是同一笔花费在 trace 里出现两遍，而"花了多少"这个问题的答案不该取决于
-      // 日志坏在哪一步。
+      // 日志坏在哪一步。（恢复段有自己的闸门：它报的是**累计**账，见 usageEmitted。）
       if (usageEmitted) return;
       usageEmitted = true;
-      const usage = usageOf(ledger);
+      // 恢复段：挂起前的账从日志读回（`preUsage`），与本段的账本合成**累计**账。
+      // 未知 + 已知 = 未知（`cumulativeUsage` 的注释）；新 Run 的 pre 是 null，
+      // 累计就是本段——与 T9 之前逐字段相同。
+      const usage = cumulativeUsage(preUsage, usageOf(ledger));
       await emit("usage_reported", {
         usage: {
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,
-          toolCalls: guard.spent().toolCalls,
+          toolCalls: preToolCalls + guard.spent().toolCalls,
           durationMs: clock() - runStartedAt,
           model: modelName,
         },
@@ -506,7 +682,19 @@ export function createRuntime(options: RunAgentOptions): AgentRuntime {
     const deps: LoopDeps = { model: guardedModel, tools: guardedTools, assembleObservation };
 
     try {
-      runStartedAt = (await emit("run_started", {})).timestamp;
+      if (init.kind === "resume") {
+        // 恢复段的起点：墙钟从**原** run_started 起算（durationMs 是整次 Run 的）。
+        // 回答与"继续"作为两条事件**追加**进既有日志——append-only 不破，
+        // 旧前缀一字不动；回放的终态守卫（T8）会保证此后不再有矛盾。
+        runStartedAt = init.validated.runStartedAt;
+        await emit("human_input_received", { input: init.input.answer });
+        await emit("run_resumed", {});
+        // 事件与状态同步推进：回答经 T7 的唯一合法路径进 transcript，
+        // pendingQuestion 清空——循环于是从"问模型"重新开始。
+        state = reduceHumanInput(state, init.input.answer);
+      } else {
+        runStartedAt = (await emit("run_started", {})).timestamp;
+      }
       yield* deliver();
 
       // 这里就是步 3 说好的消费方式：`observation === null` 区分「意图」与「结果」
@@ -610,5 +798,16 @@ export function createRuntime(options: RunAgentOptions): AgentRuntime {
     }
   }
 
-  return { run };
+  // 对外只有两个入口。`resume` 与 `run` 共享上面的全部机制——它的类型是
+  // `AgentRuntime` 的可选方法（core/types.ts），不实现的宿主不受影响。
+  return {
+    run: (task: Task, signal?: AbortSignal) => drive(task, { kind: "fresh" }, signal),
+    resume: (input: ResumeInput, signal?: AbortSignal) => {
+      // 校验在**调用点**同步发生：拒绝先于一切——连"开始迭代"都不需要等。
+      // 调用方（CLI / 装配层）因此能在 try/catch 里把 ResumeError 直接翻译成
+      // 退出码，而不必先迭代一次生成器。
+      const validated = validateResumeInput(input);
+      return drive(input.task, { kind: "resume", input, validated }, signal);
+    },
+  };
 }

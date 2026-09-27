@@ -435,4 +435,31 @@ export interface AgentCore {
  */
 export interface AgentRuntime {
   run(task: Task, signal?: AbortSignal): AsyncIterable<AgentEvent>;
+  /**
+   * 恢复一个**挂起在人类那侧**的 Run（SDD T9）。可选方法：不实现它的宿主
+   * （testing 假件、未来的轻端口）不受影响——与 `ModelPort.beginRun?` 同一先例。
+   *
+   * 语义：把回答作为 `human_input_received` 事件**追加**进既有日志（append-only
+   * 不破），补 `run_resumed`，以回放重建出的状态为起点继续循环。恢复不是第二条
+   * 代码路径，是同一条路径的新起点；校验发生在**任何写入之前**——拒绝不留痕。
+   */
+  resume?(input: ResumeInput, signal?: AbortSignal): AsyncIterable<AgentEvent>;
+}
+
+/**
+ * 恢复一个 Run 所需的全部输入（SDD T9）。
+ *
+ * 全部由 Core 词汇组成：任务、既有事件、回答。会话与 Run 的对应关系由
+ * **存储层**核对（它是"哪些 Run 属于哪个会话"的唯一知情者），运行时只收
+ * 已经核对过的数据——所以这里没有 sessionId。
+ */
+export interface ResumeInput {
+  /** 要恢复的 Run 的身份。事件流里的 `runId` 必须与它一致。 */
+  readonly runId: string;
+  /** 这个 Run 的任务。它不在事件里（`run_started` 载荷为空），由存储层交回。 */
+  readonly task: Task;
+  /** 这个 Run 的**全部**既有事件：必须是一条从头开始的连续前缀。 */
+  readonly events: readonly AgentEvent[];
+  /** 人的回答。空串在入口即被类型化拒绝（`ResumeError`，运行时侧）。 */
+  readonly answer: string;
 }
