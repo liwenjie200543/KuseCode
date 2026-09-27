@@ -119,6 +119,22 @@ a narrative walkthrough:
 node examples/end-to-end.mjs
 ```
 
+## 重构序列（SDD，2026-09-28）
+
+在十一步开发序列之上，项目完成了一轮 **SDD（规格驱动）重构**。它没有推翻任何一步——
+事件溯源底座、八道关卡、golden transcripts 全部保留——而是补上了底座缺的几层：
+
+| 层 | 落点 | 一句话 |
+|---|---|---|
+| 上下文工程 | `src/core/project.ts` | 请求级对话投影：长任务的请求体积有界且可预算，transcript 与事件日志永远完整 |
+| 人机回路 | `Runtime.resume` + `kuse answer` | 挂起的 Run 可以应答、恢复、继续循环——全程可回放可审计 |
+| 共享装配 | `src/bootstrap/` | CLI 与桌面壳只有一份接线（`createKuse`） |
+| 工具注册 | `src/toolbox.ts` | 加一个工具 = 写一个 spec + 清单加一行 |
+| 配置 | `src/config/` | flag > env > `.kuse/config.json` > 默认，四层齐备 |
+
+设计决策、借鉴取舍（参照 tinycode）与 17 个任务的完整记录见 `docs/sdd/00-progress.md`
+与 `docs/sdd/01-analysis.md` ～ `04-implementation-plan.md`。
+
 ## 提交约定
 
 ```text

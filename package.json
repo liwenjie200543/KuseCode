@@ -1,9 +1,9 @@
 {
-  "name": "ts-agent-runtime",
+  "name": "kusecode",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "A TypeScript Agent Core and Runtime derived from first principles. The Pi Agent SDK is an adapter behind ports, never the architecture.",
+  "description": "KuseCode —— 证据优先的仓库问答 Agent 底座：事件溯源的 TypeScript Agent Core 与 Runtime。",
   "license": "MIT",
   "bin": {
     "kuse": "./bin/kuse.mjs"

@@ -313,10 +313,9 @@ const PURE_MODULES: readonly string[] = ["src/config", "src/toolbox.ts"];
 const PACKAGE_FREE_MODULES: readonly string[] = ["src/bootstrap"];
 
 describe("SDD 禁线：新增模块的依赖方向（登记即承诺）", () => {
-  it("登记的纯函数模块已经落地（落地后本行必须绿）", () => {
+  it("登记的纯函数模块全部落地（T17 收尾：登记即存在）", () => {
     const missing = PURE_MODULES.filter((p) => listTsPaths(join(repoRoot, p)).length === 0);
-    // T3/T11 落地之前这里允许为空；T17 收尾时该断言收紧为 toEqual([])。
-    expect(missing.length).toBeLessThanOrEqual(PURE_MODULES.length);
+    expect(missing, "登记过的模块必须存在").toEqual([]);
   });
 
   for (const path of PURE_MODULES) {

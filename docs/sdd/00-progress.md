@@ -15,22 +15,22 @@
 
 | 任务 | 名称 | Commit | 状态 |
 |---|---|---|---|
-| T1 | 契约测试扩展（no-runtime-deps 覆盖新模块） | 见 T1 commit | ✅ |
-| T2 | CLI 测试去 dist 化 | 见 T2 commit | ✅（实证：本就不依赖 dist；修正 01-analysis P2-6 归因 + 30s 超时余量） |
-| T3 | 配置层 `src/config/` | 见 T3 commit | ✅（执行顺序在 T4 之后：类型依赖 ProjectionPolicy） |
+| T1 | 契约测试扩展（no-runtime-deps 覆盖新模块） | `7923a96` | ✅ |
+| T2 | CLI 测试去 dist 化 | `a062b31` | ✅（实证：本就不依赖 dist；修正 01-analysis P2-6 归因 + 30s 超时余量） |
+| T3 | 配置层 `src/config/` | `cc687c3` | ✅（执行顺序在 T4 之后：类型依赖 ProjectionPolicy） |
 | T4 | 对话投影词汇 `src/core/project.ts` | `1129586` | ✅ |
-| T5 | 投影接入适配器（行为等价） | 见 T5 commit | ✅（落点修正：PiModelAdapterOptions，非 RunAgentOptions） |
-| T6 | token 预算默认设防 | 见 T6 commit | ✅（spec 声明的唯一默认行为变化） |
-| T7 | `reduceHumanInput`（Core 恢复推进） | 见 T7 commit | ✅ |
-| T8 | 回放激活恢复事件 | 见 T8 commit | ✅ |
-| T9 | `Runtime.resume` | 见 T9 commit | ✅（拒绝在调用点同步发生，先于一切写入） |
-| T10 | golden 挂起-恢复固定件 | 见 T10 commit | ✅（09 号语料，双路径逐字节一致） |
-| T11 | Toolbox 升格为通用组装点 | 见 T11 commit | ✅（裸端口/gated 端口双契约；golden 逐字节不变） |
-| T12 | 装配层 `src/bootstrap/`（createKuse） | 见 T12 commit | ✅ |
-| T13 | CLI 消费装配层（行为不变） | 见 T13 commit | ✅（含配置文件层接入；42 例 CLI 测试全绿） |
-| T14 | `kuse answer` 子命令 | 见 T14 commit | ✅ |
-| T15 | 桌面 RunService 换用装配层 | 见 T15 commit | ✅ |
-| T16 | 任务级 e2e | 见 T16 commit | ✅ |
-| T17 | 工程整理（包名/文档收尾） | — | ⬜ |
+| T5 | 投影接入适配器（行为等价） | `35b180d` | ✅（落点修正：PiModelAdapterOptions，非 RunAgentOptions） |
+| T6 | token 预算默认设防 | `4331eb0` | ✅（spec 声明的唯一默认行为变化） |
+| T7 | `reduceHumanInput`（Core 恢复推进） | `d5a49c7` | ✅ |
+| T8 | 回放激活恢复事件 | `7731cff` | ✅ |
+| T9 | `Runtime.resume` | `4a22295` | ✅（拒绝在调用点同步发生，先于一切写入） |
+| T10 | golden 挂起-恢复固定件 | `9d3ec95` | ✅（09 号语料，双路径逐字节一致） |
+| T11 | Toolbox 升格为通用组装点 | `b925b0b` | ✅（裸端口/gated 端口双契约；golden 逐字节不变） |
+| T12 | 装配层 `src/bootstrap/`（createKuse） | `200d939` | ✅ |
+| T13 | CLI 消费装配层（行为不变） | `fd083d0` | ✅（含配置文件层接入；42 例 CLI 测试全绿） |
+| T14 | `kuse answer` 子命令 | `ca72ee9` | ✅ |
+| T15 | 桌面 RunService 换用装配层 | `821ba11` | ✅ |
+| T16 | 任务级 e2e | `fd8dd0a` | ✅ |
+| T17 | 工程整理（包名/文档收尾） | （本次提交） | ✅ |
 
 > 状态图例：⬜ 未开始 · 🔄 进行中 · ✅ 完成（含 commit hash）· ⏸ 暂停（原因）
