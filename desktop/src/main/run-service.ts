@@ -1,23 +1,15 @@
 import { join, resolve } from "node:path";
 import { stat } from "node:fs/promises";
 import {
-  auditRun,
-  catalogFromToolbox,
-  createRepoToolSpecs,
-  createRuntime,
-  createSessionStore,
-  createToolbox,
-  offlineProvider,
-  piModelAdapter,
-  resolveProviderModel,
-  traceOf,
+  createKuse,
   jsonlRunLog,
+  traceOf,
+  defaultConfig,
   type AgentEvent,
-  type AgentRuntime,
   type EvidenceAudit,
+  type Kuse,
+  type RunHandle,
   type RunTrace,
-  type Task,
-  type Toolbox,
 } from "../../../src/index";
 
 // ---------------------------------------------------------------------------
@@ -72,15 +64,23 @@ export interface RunServiceOptions {
  * Runtime 的宿主。它不 import electron——这样根 vitest 可以把它当普通 TS 测，
  * 而「事件怎么送到窗口」只是构造时注入的一个回调。
  *
- * 接线与 CLI 的 `commandRun` 一比一：toolbox → model（两条路）→ store.startRun
- * → createRuntime → 事件流。trace 从日志读，不从事件流里攒。
+ * SDD T15：接线全部来自**共享装配层**（`createKuse`）——本类只剩三件产品的事：
+ * 校验请求形状、把事件流推给窗口、维护取消用的 AbortController。
+ * trace 从日志读，不从事件流里攒。
  */
 export class RunService {
   private readonly controllers = new Map<string, AbortController>();
-  private readonly toolboxCache = new Map<string, Toolbox>();
-  private readonly repoRoots = new Map<string, string>();
+  /** 每个进行中/已完成 Run 的产品上下文（traceOf 的 audit 需要 repoRoot）。 */
+  private readonly runs = new Map<string, { readonly sessionId: string; readonly repoRoot: string; readonly offline: boolean }>();
+  private readonly kuse: Kuse;
 
-  constructor(private readonly options: RunServiceOptions) {}
+  constructor(private readonly options: RunServiceOptions) {
+    this.kuse = createKuse({
+      repoRoot: options.defaultRepoRoot,
+      config: defaultConfig(),
+      dataRoot: options.storeRoot,
+    });
+  }
 
   /** 发起一次 Run。日志登记完成即返回；事件经 `emit` 推送，终态在 `done` 里。 */
   async startRun(
@@ -95,78 +95,36 @@ export class RunService {
       throw new Error(`仓库目录不存在：${repoRoot}`);
     }
 
-    const toolbox = this.toolboxFor(repoRoot);
-    const store = createSessionStore({ rootDir: this.options.storeRoot });
-    const session = await store.createSession();
-    const sessionId = session.id;
-
-    const taskObject = {
-      id: `task_${sessionId}`,
-      goal: taskText,
-      repoRoot,
-      checks: [],
-    } as const;
-
-    const started = await store.startRun(sessionId, taskObject);
-    const runId = started.runId;
-
-    // 模型两条路，接线完全一样（同 CLI 的 buildModel）。
-    let model: Parameters<typeof createRuntime>[0]["model"];
-    let modelName: string;
-    let offline: boolean;
+    let model: "offline" | { readonly spec: string };
     if (request.mode === "offline") {
-      const faux = offlineProvider(
-        request.pattern === undefined ? {} : { pattern: request.pattern },
-      );
-      model = piModelAdapter({
-        models: faux.models,
-        model: faux.model,
-        catalog: catalogFromToolbox(toolbox),
-      });
-      modelName = `faux/${faux.model.id}`;
-      offline = true;
+      model = "offline";
     } else {
       const spec = process.env["KUSECODE_MODEL"];
       if (spec === undefined || spec.length === 0) {
         throw new Error("没有模型。设 KUSECODE_MODEL=provider/model，或改用离线冒烟模式。");
       }
-      const resolution = await resolveProviderModel(spec);
-      if (!resolution.ok) throw new Error(resolution.reason);
-      const resolved = resolution.resolved;
-      model = piModelAdapter({
-        models: resolved.models,
-        model: resolved.model,
-        catalog: catalogFromToolbox(toolbox),
-      });
-      modelName = `${resolved.provider}/${resolved.modelId}`;
-      offline = false;
+      model = { spec };
     }
 
-    const runtime = createRuntime({
-      tools: toolbox.port,
-      assembleObservation: toolbox.assembleObservation,
-      collectMissingMaterial: toolbox.collectMissingMaterial,
-      log: started.log,
-      ids: started.ids,
-      model,
-      modelName,
-    });
-
     const controller = new AbortController();
+    const handle = await this.kuse.startRun(
+      {
+        goal: taskText,
+        model,
+        ...(request.pattern === undefined ? {} : { pattern: request.pattern }),
+      },
+      controller.signal,
+    );
+    const runId = handle.runId;
     this.controllers.set(runId, controller);
-    this.repoRoots.set(runId, repoRoot);
-
-    const done = this.drive(runtime, taskObject, {
-      runId,
-      sessionId,
-      modelName,
-      offline,
-      signal: controller.signal,
-      toolbox,
-      readEvents: () => jsonlRunLog({ rootDir: this.options.storeRoot }).read(runId),
+    this.runs.set(runId, {
+      sessionId: handle.sessionId,
+      repoRoot,
+      offline: request.mode === "offline",
     });
 
-    return { info: { runId, sessionId }, done };
+    const done = this.drive(handle, runId);
+    return { info: { runId, sessionId: handle.sessionId }, done };
   }
 
   /** 取消一次进行中的 Run。Run 已经终态时返回 false。 */
@@ -180,58 +138,31 @@ export class RunService {
   /** 一次 Run 的 trace 与证据核对，从日志读（日志是全部真相）。 */
   async traceOf(runId: string): Promise<{ trace: RunTrace; audit: EvidenceAudit | null }> {
     const events = jsonlRunLog({ rootDir: this.options.storeRoot }).read(runId);
-    const repoRoot = this.repoRoots.get(runId) ?? this.options.defaultRepoRoot;
-    const toolbox = this.toolboxFor(repoRoot);
-    return { trace: traceOf(events), audit: auditRun(events, toolbox.materialReader) };
+    const ctx = this.runs.get(runId);
+    // audit 需要仓库上下文（工具的 materialReader）；上下文丢失时诚实地说"没做"。
+    const audit =
+      ctx === undefined ? null : await this.kuse.audit(ctx.sessionId, runId);
+    return { trace: traceOf(events), audit };
   }
 
   // -------------------------------------------------------------------------
 
-  private toolboxFor(repoRoot: string): Toolbox {
-    const cached = this.toolboxCache.get(repoRoot);
-    if (cached !== undefined) return cached;
-    // 存储目录若在仓库里就不算材料——与 CLI 的 storeInsideRepo 同一条规矩。
-    const inside = this.options.storeRoot.startsWith(repoRoot)
-      ? [this.options.storeRoot]
-      : [];
-    const toolbox = createToolbox(createRepoToolSpecs(), {
-      repoRoot,
-      clock: () => Date.now(),
-      ignorePaths: inside,
-    });
-    this.toolboxCache.set(repoRoot, toolbox);
-    return toolbox;
-  }
-
-  private async drive(
-    runtime: AgentRuntime,
-    taskObject: Task,
-    ctx: {
-      runId: string;
-      sessionId: string;
-      modelName: string;
-      offline: boolean;
-      signal: AbortSignal;
-      toolbox: Toolbox;
-      readEvents: () => readonly AgentEvent[];
-    },
-  ): Promise<RunFinishedInfo> {
-    const { runId, sessionId } = ctx;
+  private async drive(handle: RunHandle, runId: string): Promise<RunFinishedInfo> {
+    const ctx = this.runs.get(runId);
     try {
-      for await (const event of runtime.run(taskObject, ctx.signal)) {
+      for await (const event of handle.events) {
         this.options.emit({ kind: "event", runId, event });
       }
       // trace 从日志读，不从事件流里攒（事件流可能被提前离场的消费者截短）。
-      const events = ctx.readEvents();
-      const trace = traceOf(events);
-      const audit = auditRun(events, ctx.toolbox.materialReader);
+      // finished 由装配层在事件流结束时从日志结算——这里只做转发。
+      const finished = await handle.finished;
       const result: RunFinishedInfo = {
         runId,
-        sessionId,
-        offline: ctx.offline,
-        modelName: ctx.modelName,
-        trace,
-        audit,
+        sessionId: handle.sessionId,
+        offline: ctx?.offline ?? false,
+        modelName: finished.trace.model ?? "unknown",
+        trace: finished.trace,
+        audit: finished.audit,
       };
       this.options.emit({ kind: "done", result });
       return result;
@@ -247,6 +178,7 @@ export class RunService {
       throw error;
     } finally {
       this.controllers.delete(runId);
+      this.runs.delete(runId);
     }
   }
 }

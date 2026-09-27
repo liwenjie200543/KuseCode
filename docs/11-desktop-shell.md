@@ -35,10 +35,10 @@ desktop/
 │   └── renderer/                # React：任务表单、事件流直播、trace 面板
 ```
 
-**RunService 是唯一要点**：它一比一复刻 `src/cli/main.ts` 的 `commandRun` 接线
-（toolbox → model 两路 → `store.startRun` → `createRuntime` → 事件流），
-但不 import electron——事件怎么送到窗口只是构造时注入的一个 `emit` 回调。
-这样根 vitest 把它当普通 TS 测，「主进程能做什么」与「Electron 是什么」解耦。
+**RunService 的现状（SDD T15 更新）**：接线已收敛到共享装配层 `createKuse`
+（`src/bootstrap/`）——CLI 与桌面自此只有**一份**接线。本类只剩产品的事：
+校验请求形状、把事件流推给窗口（构造时注入的 `emit` 回调）、维护取消用的
+AbortController。不 import electron 的立场不变；根 vitest 仍把它当普通 TS 测。
 
 三条从既有步数继承的铁律在桌面壳里原样成立：
 

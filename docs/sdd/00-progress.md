@@ -29,7 +29,7 @@
 | T12 | 装配层 `src/bootstrap/`（createKuse） | 见 T12 commit | ✅ |
 | T13 | CLI 消费装配层（行为不变） | 见 T13 commit | ✅（含配置文件层接入；42 例 CLI 测试全绿） |
 | T14 | `kuse answer` 子命令 | 见 T14 commit | ✅ |
-| T15 | 桌面 RunService 换用装配层 | — | ⬜ |
+| T15 | 桌面 RunService 换用装配层 | 见 T15 commit | ✅ |
 | T16 | 任务级 e2e | — | ⬜ |
 | T17 | 工程整理（包名/文档收尾） | — | ⬜ |
 
