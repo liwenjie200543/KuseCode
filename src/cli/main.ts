@@ -26,26 +26,23 @@
  * 这是"SDK 只在适配器后面"这条边界在**加载时间**上的体现，而不只是目录结构上的。
  */
 
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import process from "node:process";
 
 import { redactor, secretsFromEnv } from "../core/redact.js";
-import type { ModelPort, Task } from "../core/types.js";
-import { createRuntime } from "../runtime/run-agent.js";
 import { traceOf } from "../runtime/trace.js";
 import type { RunTrace } from "../runtime/trace.js";
-import { auditRun } from "../runtime/verify.js";
 import { createSessionStore } from "../store/session-store.js";
 import type { SessionStore } from "../store/session-store.js";
-import { createRepoToolSpecs } from "../tools/repo-tools.js";
-import { createToolbox } from "../toolbox.js";
-import type { Toolbox } from "../toolbox.js";
+import { ConfigError, defaultConfig, mergeConfig, parseConfigFile } from "../config/loader.js";
+import type { DeepPartial, KuseConfig } from "../config/schema.js";
+import { createKuse } from "../bootstrap/index.js";
+import type { RunHandle } from "../bootstrap/index.js";
 import { EXIT, HELP, flagOn, flagValue, flagsMissingValue, parseArgs, unknownFlags } from "./args.js";
 import type { ParsedArgs } from "./args.js";
 import { REDACTION_NOTICE, exitLine, progressLine, traceLines } from "./render.js";
 
-/** 适配器的形状（动态 import 的结果）。SDK 的类型只在这里出现一次。 */
-type AdapterModule = typeof import("../adapter/pi/index.js");
 
 // ---------------------------------------------------------------------------
 // 与进程的边界
@@ -139,23 +136,6 @@ function parseRun(args: ParsedArgs, io: CliIo): RunOptions | null {
 }
 
 /**
- * 存储目录落在被分析仓库里面时的**仓库相对路径**；不在里面就是 `null`。
- *
- * 这件事必须算出来，因为默认配置就会撞上：`--repo` 默认当前目录、`--store` 默认
- * `./runs`，于是存储就在仓库里。而事件日志里写着任务文本，所以一次
- * `search_text` 会命中**这次 Run 自己的日志**——Run 把自己的输出当成了输入。
- * 实测撞到过一次，那时报告的第一条证据是它自己的 `events.jsonl`。
- *
- * 交给工具集的是**路径**而不是目录名（`runs`）：用名字去跳过会让一个真正叫
- * `runs` 的素材目录被静默漏掉，而"静默漏掉材料"看起来就像那个仓库里没有那些文件。
- */
-function storeInsideRepo(repo: string, store: string): string | null {
-  const path = relative(repo, store);
-  if (path === "" || path.startsWith("..") || isAbsolute(path)) return null;
-  return path.split(sep).join("/");
-}
-
-/**
  * 任务的文本：位置参数、或 stdin。
  *
  * 两处都空就报错——一次没有任务的 Run 没有意义，而"用一个默认问题跑一次"
@@ -165,56 +145,6 @@ async function readTask(args: ParsedArgs, io: CliIo): Promise<string> {
   const inline = args.positionals.join(" ").trim();
   if (inline.length > 0) return inline;
   return io.stdin === undefined ? "" : (await io.stdin()).trim();
-}
-
-// ---------------------------------------------------------------------------
-// 模型：两条路径，接线完全一样
-// ---------------------------------------------------------------------------
-
-interface BuiltModel {
-  readonly model: ModelPort;
-  readonly modelName: string;
-  /** 离线冒烟模式。它会被明确地印出来，因为它不产生"模型的结论"。 */
-  readonly offline: boolean;
-}
-
-/**
- * `--model faux` 之外的写法交给真实 provider 目录去解析。
- *
- * 顺序是刻意的：离线模式不联网、不要凭据、瞬时完成；真实路径要建 SDK 的 provider
- * 目录（实测约 1 秒）并且可能因为没配凭据而失败，所以只在真要发请求时才走它。
- */
-async function buildModel(
-  spec: string,
-  pattern: string,
-  toolbox: Toolbox,
-  adapter: AdapterModule,
-): Promise<{ readonly ok: true; readonly built: BuiltModel } | { readonly ok: false; readonly message: string }> {
-  const catalog = adapter.catalogFromToolbox(toolbox);
-
-  if (spec === "faux") {
-    const offline = adapter.offlineProvider({ pattern });
-    return {
-      ok: true,
-      built: {
-        model: adapter.piModelAdapter({ models: offline.models, model: offline.model, catalog }),
-        modelName: `faux/${offline.model.id}`,
-        offline: true,
-      },
-    };
-  }
-
-  const resolution = await adapter.resolveProviderModel(spec);
-  if (!resolution.ok) return { ok: false, message: resolution.reason };
-  const { models, model, provider, modelId } = resolution.resolved;
-  return {
-    ok: true,
-    built: {
-      model: adapter.piModelAdapter({ models, model, catalog }),
-      modelName: `${provider}/${modelId}`,
-      offline: false,
-    },
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -244,6 +174,34 @@ function exitCodeFor(trace: RunTrace): number {
   }
 }
 
+/**
+ * 仓库配置文件（`<repo>/.kuse/config.json`）→ 配置层。文件不存在是常态（null）。
+ * 类型错/非法 JSON → 用法错误（Spec FR-5.3：启动即失败，消息指出键名）。
+ * 未知键/疑似凭据 → 警告随层带回，由调用方印出。
+ */
+async function loadRepoConfig(repo: string): Promise<{
+  readonly config: DeepPartial<KuseConfig> | null;
+  readonly usageError: string | null;
+  readonly warnings: readonly string[];
+}> {
+  const file = join(repo, ".kuse", "config.json");
+  let text: string;
+  try {
+    text = await readFile(file, "utf8");
+  } catch {
+    return { config: null, usageError: null, warnings: [] };
+  }
+  try {
+    const parsed = parseConfigFile(text);
+    return { config: parsed.config, usageError: null, warnings: parsed.warnings };
+  } catch (error) {
+    if (error instanceof ConfigError) {
+      return { config: null, usageError: `配置文件 ${file} 无法使用：${error.message}`, warnings: [] };
+    }
+    throw error;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // kuse run
 // ---------------------------------------------------------------------------
@@ -256,7 +214,20 @@ async function commandRun(args: ParsedArgs, io: CliIo): Promise<number> {
   if (task.length === 0) {
     return usage(io, "没有任务文本。写在命令后面，或者用管道喂给 stdin。");
   }
-  if (options.model === null) {
+
+  // 配置四层（Spec FR-5）：flag（env 折叠在 parseRun 里）> 仓库配置文件 > 默认。
+  // 覆盖必须可见：文件的警告（未知键/疑似凭据）原样印到 stderr。
+  const repoConfig = await loadRepoConfig(options.repo);
+  if (repoConfig.usageError !== null) return usage(io, repoConfig.usageError);
+  for (const warning of repoConfig.warnings) io.err(`kuse: 配置警告：${warning}`);
+  const config = mergeConfig([
+    options.model === null ? null : { model: options.model },
+    repoConfig.config,
+    defaultConfig(),
+  ]);
+  // 模型的来源：flag/env 优先，其次配置文件。都没有才是"没有模型"。
+  const modelSpec = options.model ?? config.model;
+  if (modelSpec === null) {
     return usage(
       io,
       "没有模型。用 --model faux 跑离线冒烟，或者设 KUSECODE_MODEL=provider/model。" +
@@ -264,63 +235,41 @@ async function commandRun(args: ParsedArgs, io: CliIo): Promise<number> {
     );
   }
 
-  // 存储目录若落在仓库里面，它就不算材料——见 `storeInsideRepo`。
-  const ownArtifacts = storeInsideRepo(options.repo, options.store);
-  const toolbox = createToolbox(createRepoToolSpecs(), {
-    repoRoot: options.repo,
-    clock: () => Date.now(),
-    ignorePaths: ownArtifacts === null ? [] : [ownArtifacts],
-  });
-  const store = createSessionStore({ rootDir: options.store });
-
-  // 会话：**给出来的**那一个先查（只读、便宜，不需要模型）；没给的话，新建它的时机
-  // 在后面——模型解析失败的 Run 不该在存储里留下一个空的会话。
-  if (options.session !== null && (await store.getSession(options.session)) === null) {
-    return usage(io, `会话 ${options.session} 不存在（在 ${options.store} 里找不到）。`);
+  // 装配层是唯一接线点（SDD T12/T13）：toolbox → 模型 → store → runtime 的线
+  // 只存在于 createKuse 里。这里只剩参数翻译与结果呈现。
+  const kuse = createKuse({ repoRoot: options.repo, config, dataRoot: options.store });
+  let handle: RunHandle;
+  try {
+    handle = await kuse.startRun(
+      {
+        goal: task,
+        model: modelSpec === "faux" ? "offline" : { spec: modelSpec },
+        pattern: options.pattern,
+        ...(options.session === null ? {} : { sessionId: options.session }),
+      },
+      io.signal,
+    );
+  } catch (error) {
+    // 模型解析失败 / 会话不存在：用法错误。startRun 的顺序保证（先解析模型、
+    // 后建会话）让"用法错误不在存储里留下痕迹"继续成立。
+    return usage(io, error instanceof Error ? error.message : String(error));
   }
-
-  // SDK 在**校验全部通过之后**才被拉进来。
-  //
-  // 它是这个 CLI 里唯一的重活——建 provider 目录实测约 1 秒——而一次用法错误
-  // （选项拼错、没给任务、会话不存在）根本用不到模型。把导入放在这里而不是
-  // `dispatch` 的 `case "run"` 里，是不让"打错一个字"变成"等一秒钟"。
-  const adapter: AdapterModule = await import("../adapter/pi/index.js");
-  const built = await buildModel(options.model, options.pattern, toolbox, adapter);
-  if (!built.ok) return usage(io, built.message);
-
-  const sessionId = options.session ?? (await store.createSession()).id;
-
-  // 任务的身份由它所属的会话决定：一次 CLI 调用一个会话，所以这个 id 稳定可读。
-  const taskObject: Task = {
-    id: `task_${sessionId}`,
-    goal: task,
-    repoRoot: options.repo,
-    checks: [],
-  };
-
-  const started = await store.startRun(sessionId, taskObject);
-  const runtime = createRuntime({
-    tools: toolbox.port,
-    assembleObservation: toolbox.assembleObservation,
-    collectMissingMaterial: toolbox.collectMissingMaterial,
-    log: started.log,
-    ids: started.ids,
-    model: built.built.model,
-    modelName: built.built.modelName,
-  });
+  const sessionId = handle.sessionId;
+  const runId = handle.runId;
+  const offline = modelSpec === "faux";
 
   if (!options.quiet) {
-    if (built.built.offline) {
+    if (offline) {
       io.err(
         "kuse: 离线冒烟模式（--model faux）。结论由固定流程从真实材料里抄出来，" +
           "不是模型推理的结果；这里验证的是链路，不是答案。",
       );
     }
     io.err(`kuse: 仓库 ${options.repo}`);
-    io.err(`kuse: 会话 ${sessionId}，Run ${started.runId}，日志 ${options.store}/${started.runId}/events.jsonl`);
+    io.err(`kuse: 会话 ${sessionId}，Run ${runId}，日志 ${options.store}/${runId}/events.jsonl`);
   }
 
-  for await (const event of runtime.run(taskObject, io.signal)) {
+  for await (const event of handle.events) {
     if (options.quiet || options.json) continue;
     const line = progressLine(event);
     if (line !== null) io.err(line);
@@ -328,9 +277,7 @@ async function commandRun(args: ParsedArgs, io: CliIo): Promise<number> {
 
   // trace 从**日志**读，不从事件流里攒：事件流是"已送出的前缀"，日志才是全部真相。
   // 消费者提前离场时流会短一截，而"花了多少"不该因此变成另一个数。
-  const events = started.log.read(started.runId);
-  const trace = traceOf(events);
-  const audit = auditRun(events, toolbox.materialReader);
+  const { trace, audit } = await handle.finished;
   const code = exitCodeFor(trace);
 
   if (options.json) {
@@ -339,8 +286,8 @@ async function commandRun(args: ParsedArgs, io: CliIo): Promise<number> {
         {
           sessionId,
           storeDir: options.store,
-          eventsPath: `${options.store}/${started.runId}/events.jsonl`,
-          offline: built.built.offline,
+          eventsPath: `${options.store}/${runId}/events.jsonl`,
+          offline,
           trace,
           audit,
         },
@@ -352,9 +299,9 @@ async function commandRun(args: ParsedArgs, io: CliIo): Promise<number> {
     const body = traceLines(trace, audit, [
       `仓库   ${options.repo}`,
       `会话   ${sessionId}`,
-      `Run    ${started.runId}`,
-      `模型   ${built.built.modelName}${built.built.offline ? "（离线冒烟）" : ""}`,
-      `日志   ${options.store}/${started.runId}/events.jsonl`,
+      `Run    ${runId}`,
+      `模型   ${trace.model ?? modelSpec}${offline ? "（离线冒烟）" : ""}`,
+      `日志   ${options.store}/${runId}/events.jsonl`,
     ]).join("\n");
     io.out(body);
   }

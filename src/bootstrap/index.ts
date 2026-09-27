@@ -236,16 +236,18 @@ export function createKuse(options: KuseOptions): Kuse {
         throw new Error("任务文本为空：一次没有任务的 Run 没有意义");
       }
 
+      // 顺序即不变量：**模型解析先于会话创建**。一次用法错误（provider 拼错、
+      // 凭据缺失）不该在存储里留下一个空会话——"Run 没有开始就没有痕迹"。
+      const toolbox = toolboxFor(repoRoot());
+      const spec = input.model === "offline" ? "faux" : input.model.spec;
+      const built = await buildModel(spec, input.pattern ?? "TODO", toolbox);
+
       // 会话先查后建：往一个不存在的会话里塞 Run 是调用方的错误（store 同款立场）。
       const sessionId =
         input.sessionId ?? (await store.createSession()).id;
       if ((await store.getSession(sessionId)) === null) {
         throw new Error(`会话 ${sessionId} 不存在（在 ${options.dataRoot} 里找不到）`);
       }
-
-      const toolbox = toolboxFor(repoRoot());
-      const spec = input.model === "offline" ? "faux" : input.model.spec;
-      const built = await buildModel(spec, input.pattern ?? "TODO", toolbox);
 
       const task: Task = {
         id: `task_${sessionId}`,
