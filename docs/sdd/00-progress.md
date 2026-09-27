@@ -20,7 +20,7 @@
 | T3 | 配置层 `src/config/` | 见 T3 commit | ✅（执行顺序在 T4 之后：类型依赖 ProjectionPolicy） |
 | T4 | 对话投影词汇 `src/core/project.ts` | `1129586` | ✅ |
 | T5 | 投影接入适配器（行为等价） | 见 T5 commit | ✅（落点修正：PiModelAdapterOptions，非 RunAgentOptions） |
-| T6 | token 预算默认设防 | — | ⬜ |
+| T6 | token 预算默认设防 | 见 T6 commit | ✅（spec 声明的唯一默认行为变化） |
 | T7 | `reduceHumanInput`（Core 恢复推进） | — | ⬜ |
 | T8 | 回放激活恢复事件 | — | ⬜ |
 | T9 | `Runtime.resume` | — | ⬜ |

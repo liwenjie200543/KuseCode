@@ -88,19 +88,20 @@ export type ProgressPredicate = (before: AgentState, after: AgentState) => boole
  * - `maxRetries: 2`：重试本身是步 8 的事（要先有 provider 错误分类），本步不动它；
  *   **步 8 已落地**：它现在被 `retry.ts` 消费（只对 `rate_limited` / `timeout` /
  *   `provider_unavailable` 重试，取消永不重试）。
- * - token 两项为 `null`：本步**不执法**，理由见 docs/05（没有对应的失败码，
- *   也没有 usage 来源）。`null` 在这里的含义是「不设上限」，与「我们还没法测」是
- *   同一件事——在能测之前，设一个数字只是自欺。
- *   **步 8 已落地用法**：usage 来源与 `budget_tokens` 都有了，执法在
- *   `beforeModel(state, spent)`；默认仍然是 `null`，因为"一个猜出来的上限"
- *   比"没有上限"更危险——调用方要给数字，我们才执法。
+ * - token 两项：步 8 落地了用法来源与 `budget_tokens` 码之后，默认**仍然是
+ *   `null`**，理由是"一个猜出来的上限"比"没有上限"更危险。
+ *   **SDD T6 修正输入项**：`maxInputTokens` 默认改为 200_000。前提是 T4/T5 的
+ *   请求级投影落地——请求体积从此有界且可预算，"猜出来的上限"有了依据
+ *   （约 80 万字符的投影 ≈ 现代模型窗口的保守份额）。没有投影时这是猜，
+ *   有投影时这是设防。`maxOutputTokens` 保持 `null`：输出长度由模型自己
+ *   决定，我们没有任何杠杆让它变小——设一个数字只会制造假失败。
  */
 export const DEFAULT_BUDGET: RunBudget = Object.freeze({
   maxIterations: 32,
   maxToolCalls: 64,
   maxRetries: 2,
   timeoutMs: 10 * 60 * 1000,
-  maxInputTokens: null,
+  maxInputTokens: 200_000,
   maxOutputTokens: null,
 });
 

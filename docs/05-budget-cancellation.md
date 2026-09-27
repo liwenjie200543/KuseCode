@@ -262,3 +262,21 @@ npm test
 7. **消费者离场补的那条 `run_cancelled` 没人能看见。** 只有日志读者（回放、trace）受益。
    如果将来要让 UI 知道「有人停了这次 Run」，那需要一个消费者之外的观察者，
    本步没有引入。
+
+## SDD 追记（T6）：`maxInputTokens` 默认设防
+
+`DEFAULT_BUDGET.maxInputTokens` 从 `null` 改为 `200_000`（SDD 实施计划 T6，
+2026-09-28）。这是 SDD 重构声明的**唯一默认行为变化**（`docs/sdd/02-spec.md` §4.11）。
+
+- **为什么现在能设**：步 8 落地用法来源时默认仍是 `null`，理由是"一个猜出来的
+  上限"比"没有上限"更危险。SDD T4/T5 的请求级对话投影（`src/core/project.ts`）
+  落地之后，请求体积有界且可预算，这个数字不再靠猜——约 80 万字符的投影
+  （chars/4 ≈ 20 万 token）是现代模型窗口的保守份额。
+- **它怎么执法**：不变——`beforeModel(state, spent)` 在**发请求之前**检查
+  已报账的累计用量，超限的请求不发出去，Run 以 `budget_tokens` 收场并说清
+  原因（`docs/05` 第二节）。
+- **投影与预算的关系**：投影预算（`projection.projectionTokenBudget`，策略层）
+  让请求变小；token 预算（`budget.maxInputTokens`，执法层）让超支的 Run 停下
+  并归因。前者是缓解，后者是执法，两者互补。
+- `maxOutputTokens` 保持 `null`：输出长度没有投影这样的杠杆，设数字只会
+  制造假失败。
