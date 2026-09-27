@@ -39,6 +39,7 @@ import type {
   Tool as PiTool,
   TSchema,
 } from "@earendil-works/pi-ai";
+import type { ProjectionPolicy } from "../../core/project.js";
 import type { AgentState, Decision, ModelPort, ModelUsage, ModelUsageLedger, RunErrorCode } from "../../core/types.js";
 import { redactor, secretsFromEnv } from "../../core/redact.js";
 import { UsageAccumulator } from "../../core/usage.js";
@@ -62,6 +63,12 @@ export interface PiModelAdapterOptions {
   readonly options?: Omit<SimpleStreamOptions, "signal" | "maxRetries">;
   /** 覆盖默认的 system prompt。 */
   readonly systemPrompt?: string;
+  /**
+   * 请求级对话投影策略（SDD T5）。省略 = 全部逐字（与投影机制出现前
+   * 逐字节相同）。策略由装配层从配置得出后注入；守卫与预算看到的永远是
+   * **真实状态**，投影只影响"这次请求装了多少对话"。
+   */
+  readonly projection?: ProjectionPolicy;
   /** 给 `Evidence.provenance.at` 与重建消息用。默认 `Date.now`。 */
   readonly clock?: () => number;
   /** 每一轮流事件的观察者。用于 trace / 流式呈现；不改变决策语义。 */
@@ -167,12 +174,14 @@ export function piModelAdapter(options: PiModelAdapterOptions): ModelPort {
       // 漏掉任何一条，"凭据不进日志"就只成立一半。
       try {
         // 任务面的字段全部来自 Core 的投影；工具声明来自适配器的目录。
+        // 对话面经请求级投影（SDD T5）：策略省略时全量逐字，行为不变。
         const request = buildRequest({
           state,
           availableTools: catalog.allNames,
           identity,
           tools: catalog.entries,
           systemPrompt,
+          ...(options.projection === undefined ? {} : { projection: options.projection }),
         });
 
         const context: PiContext = {

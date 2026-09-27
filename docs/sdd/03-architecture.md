@@ -435,12 +435,16 @@ ToolSpec 注册（重名即抛）→ 意图进入 port.execute：
   产物 = provider 请求（每轮重建，不缓存）
 ```
 
-执行位置与顺序（关键决定）：投影发生在**受守卫的模型端口内侧、真实端口外侧**——
+执行位置与顺序（关键决定；**T5 实施时的修正**：原稿写"真实端口外侧"，实际落点是
+**真实端口内侧**——请求本来就由适配器构建（`buildRequest`），Runtime 从不构建
+请求，所以策略作为 `PiModelAdapterOptions.projection` 注入，而不是
+`RunAgentOptions`。不变量不变：预算/空转判据看到的是真实状态）：
 
 ```text
-guardedModel（预算/事件/重试，看到真实 state）
-  → 投影（projectConversation）
-    → piModel.decide（SDK 只见投影产物）
+guardedModel（预算/事件/重试，看到真实状态）
+  → piModelAdapter.decide（真实端口内侧）
+      → 投影（projectConversation，构建请求时）
+        → pi-ai streamSimple（SDK 只见投影产物）
 ```
 
 因此：`no_progress` / 迭代 / 工具预算全部基于**真实状态**判断，

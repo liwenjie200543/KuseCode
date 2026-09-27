@@ -30,7 +30,23 @@ import type {
   Usage,
 } from "@earendil-works/pi-ai";
 import { observationsOf, renderContext } from "../../core/loop.js";
+import { projectConversation } from "../../core/project.js";
+import type { ProjectionPolicy, ProjectedTurn } from "../../core/project.js";
 import type { AgentState, Context, Observation, Task } from "../../core/types.js";
+
+/**
+ * 未给投影策略时的默认：**全部逐字**。
+ *
+ * 它存在是为了让"接了投影机制"与"改变请求内容"解耦——省略策略的调用方
+ * （既有测试、golden 双路径）得到的请求与投影机制出现之前逐字节相同。
+ * 真正的折叠策略由装配层从配置得出后注入（`piModelAdapterOptions.projection`）。
+ */
+const FULL_VERBATIM: ProjectionPolicy = {
+  keepRecentTurns: Number.MAX_SAFE_INTEGER,
+  projectionTokenBudget: Number.MAX_SAFE_INTEGER,
+  foldedObservationChars: 400,
+  foldedDecisionChars: 200,
+};
 
 /** 回放出来的 assistant 消息需要的 provider 元数据。它们不影响我们的语义。 */
 export interface ProviderIdentity {
@@ -99,8 +115,21 @@ export function renderObservationText(observation: Observation): string {
   return parts.join("\n\n");
 }
 
-/** 把一条 `Message` 序列翻译成 provider 的消息序列。 */
-function buildMessages(task: Task, state: AgentState, identity: ProviderIdentity): PiMessage[] {
+/**
+ * 把一条 `Message` 序列翻译成 provider 的消息序列。
+ *
+ * SDD T5：对话面从**投影**出发，而不是直接遍历 transcript——
+ * 折叠轮渲染成一条带可见标记的 user 消息（连续折叠轮合并为一条），
+ * verbatim 轮的消息按既有路径原样翻译。不给策略（`FULL_VERBATIM`）时
+ * 全部轮 verbatim，产物与本注释机制出现之前逐字节相同——这是 golden
+ * 不破的结构前提。
+ */
+function buildMessages(
+  task: Task,
+  state: AgentState,
+  identity: ProviderIdentity,
+  policy: ProjectionPolicy,
+): PiMessage[] {
   const messages: PiMessage[] = [
     {
       role: "user",
@@ -115,71 +144,115 @@ function buildMessages(task: Task, state: AgentState, identity: ProviderIdentity
     },
   ];
 
+  const projection = projectConversation(state, policy);
+
+  /** 最近一条 verbatim assistant 消息的下标（工具结果按它配对，id 必须确定）。 */
   let assistantIndex = -1;
-  for (const message of state.transcript) {
-    if (message.role === "assistant") {
-      assistantIndex += 1;
-      const { decision } = message;
-      if (decision.kind === "call_tool") {
-        const call: ToolCall = {
-          type: "toolCall",
-          id: toolCallIdFor(assistantIndex),
-          name: decision.intent.name,
-          // `ToolIntent.args` 是 `Readonly<Record<string, unknown>>`，而 provider 要的是
-          // 可变对象：复制一次，免得下游改动回写进 Core 的状态。
-          arguments: { ...decision.intent.args },
-        };
+
+  /** 连续折叠轮的摘要缓冲：合并成一条 user 消息，避免相邻 user 消息打湿协议。 */
+  let foldedBuffer: string[] | null = null;
+  const flushFolded = (): void => {
+    if (foldedBuffer === null) return;
+    messages.push({
+      role: "user",
+      content: [
+        "（以下是此前轮次的折叠摘要——完整材料在事件日志里，这里只保留证据的骨架。）",
+        ...foldedBuffer,
+      ].join("\n"),
+      timestamp: 0,
+    });
+    foldedBuffer = null;
+  };
+
+  const translate = (turn: Extract<ProjectedTurn, { kind: "verbatim" }>): void => {
+    for (const message of turn.messages) {
+      if (message.role === "assistant") {
+        flushFolded();
+        const { decision } = message;
+        if (decision.kind === "call_tool") {
+          const call: ToolCall = {
+            type: "toolCall",
+            id: toolCallIdFor(assistantIndex + 1),
+            name: decision.intent.name,
+            // `ToolIntent.args` 是 `Readonly<Record<string, unknown>>`，而 provider 要的是
+            // 可变对象：复制一次，免得下游改动回写进 Core 的状态。
+            arguments: { ...decision.intent.args },
+          };
+          assistantIndex += 1;
+          messages.push({
+            role: "assistant",
+            content: [call],
+            api: identity.api,
+            provider: identity.provider,
+            model: identity.model,
+            usage: NO_USAGE,
+            stopReason: "toolUse",
+            timestamp: 0,
+          });
+          continue;
+        }
+        // respond / ask_human：它们在 Core 里是"模型说的话"，翻成文本最接近原意
+        const text =
+          decision.kind === "respond" ? decision.report.summary : decision.question;
+        assistantIndex += 1;
         messages.push({
           role: "assistant",
-          content: [call],
+          content: [textBlock(text)],
           api: identity.api,
           provider: identity.provider,
           model: identity.model,
           usage: NO_USAGE,
-          stopReason: "toolUse",
+          stopReason: "stop",
           timestamp: 0,
         });
         continue;
       }
-      // respond / ask_human：它们在 Core 里是"模型说的话"，翻成文本最接近原意
-      const text =
-        decision.kind === "respond" ? decision.report.summary : decision.question;
-      messages.push({
-        role: "assistant",
-        content: [textBlock(text)],
-        api: identity.api,
-        provider: identity.provider,
-        model: identity.model,
-        usage: NO_USAGE,
-        stopReason: "stop",
+
+      if (message.role === "human") {
+        flushFolded();
+        messages.push({ role: "user", content: message.answer, timestamp: 0 });
+        continue;
+      }
+
+      // role === "tool"：结果必须挂回它对应的那次调用
+      const result: ToolResultMessage = {
+        role: "toolResult",
+        toolCallId: toolCallIdFor(assistantIndex),
+        toolName: message.intent.name,
+        content: [textBlock(renderObservationText(message.observation))],
+        details: message.observation.value,
+        isError: message.observation.error !== null,
         timestamp: 0,
-      });
+      };
+      messages.push(result);
+    }
+  };
+
+  for (const turn of projection.turns) {
+    if (turn.kind === "folded") {
+      foldedBuffer = [...(foldedBuffer ?? []), ...turn.digest];
       continue;
     }
-
-    if (message.role === "human") {
-      messages.push({ role: "user", content: message.answer, timestamp: 0 });
-      continue;
-    }
-
-    // role === "tool"：结果必须挂回它对应的那次调用
-    const result: ToolResultMessage = {
-      role: "toolResult",
-      toolCallId: toolCallIdFor(assistantIndex),
-      toolName: message.intent.name,
-      content: [textBlock(renderObservationText(message.observation))],
-      details: message.observation.value,
-      isError: message.observation.error !== null,
-      timestamp: 0,
-    };
-    messages.push(result);
+    translate(turn);
   }
+  flushFolded();
 
   // 一个**有意图但没有结果**的调用（执行期间 Run 结束）如果留在末尾，
   // provider 会收到一个悬空的 tool call 并拒绝这次请求。补一条诚实的工具结果，
   // 而不是把那半个动作从历史里抹掉——"这一次没有返回"是一个真实发生过的状态。
+  // 它读的是**状态**（协议诚实，不属于"省 token"），但只在悬空那轮是 verbatim
+  // 时才补：那一轮若被折叠，请求里根本没有悬空的 ToolCall（摘要把"没有回来"
+  // 说过了），此时补工具结果反而无处挂靠。
   const last = state.transcript[state.transcript.length - 1];
-  if (last !== undefined && last.role === "assistant" && last.decision.kind === "call_tool") {
+  const lastTurn = projection.turns[projection.turns.length - 1];
+  const danglingInVerbatim =
+    last !== undefined &&
+    last.role === "assistant" &&
+    last.decision.kind === "call_tool" &&
+    lastTurn !== undefined &&
+    lastTurn.kind === "verbatim";
+  if (danglingInVerbatim) {
+    flushFolded();
     messages.push({
       role: "toolResult",
       toolCallId: toolCallIdFor(assistantIndex),
@@ -224,6 +297,11 @@ export interface BuildRequestOptions {
   readonly tools: readonly { readonly name: string; readonly description: string; readonly parameters: unknown }[];
   /** 覆盖默认的 system prompt。省略时用 `buildSystemPrompt()`。 */
   readonly systemPrompt?: string;
+  /**
+   * 请求级对话投影策略（SDD T5）。省略 = 全部逐字（行为与投影机制出现前
+   * 逐字节相同）。真正的策略由装配层从配置得出后注入。
+   */
+  readonly projection?: ProjectionPolicy;
 }
 
 /** 一次请求的全部内容。它就是"模型能看到什么"的完整答案。 */
@@ -233,6 +311,8 @@ export interface ProviderRequest {
   readonly tools: readonly { readonly name: string; readonly description: string; readonly parameters: unknown }[];
   /** Core 的投影，保留下来供测试对照（不额外进请求）。 */
   readonly context: Context;
+  /** 这次请求折叠了多少轮（0 = 全量）。可观测性字段，不进请求。 */
+  readonly foldedTurns: number;
 }
 
 /**
@@ -243,10 +323,13 @@ export interface ProviderRequest {
  */
 export function buildRequest(options: BuildRequestOptions): ProviderRequest {
   const context = taskFacingContext(options.state, options.availableTools);
+  const policy = options.projection ?? FULL_VERBATIM;
+  const projection = projectConversation(options.state, policy);
   return {
     systemPrompt: options.systemPrompt ?? buildSystemPrompt(),
-    messages: buildMessages(options.state.task, options.state, options.identity),
+    messages: buildMessages(options.state.task, options.state, options.identity, policy),
     tools: options.tools,
     context,
+    foldedTurns: projection.foldedTurns,
   };
 }

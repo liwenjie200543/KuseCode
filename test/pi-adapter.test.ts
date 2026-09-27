@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 import type { AssistantMessage, Context as PiContext, Usage } from "@earendil-works/pi-ai";
 import { observationsOf } from "../src/core/loop.js";
-import type { AgentState, Observation } from "../src/core/types.js";
+import type { AgentState, Message, Observation } from "../src/core/types.js";
 import {
   AdapterError,
   ASK_HUMAN_TOOL,
@@ -656,6 +656,133 @@ describe("状态怎么翻成一次请求", () => {
       tools: catalog.entries,
     });
     expect(request.tools.map((t) => t.name)).toEqual([...catalog.allNames]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 五点五、请求级对话投影（SDD T5）
+// ---------------------------------------------------------------------------
+
+describe("请求级对话投影", () => {
+  const box = createRepoTools({ repoRoot: "." });
+  const catalog = catalogFromToolbox(box);
+  const identity = { api: "anthropic-messages", provider: "anthropic", model: "claude-sonnet" };
+
+  /** 造 N 轮大观测的 transcript。 */
+  function bigState(turns: number): AgentState {
+    const transcript: AgentState["transcript"] = [];
+    for (let index = 0; index < turns; index += 1) {
+      const intent = { name: "read_file", args: { path: `src/file-${index}.ts` } };
+      (transcript as Message[]).push({ role: "assistant", decision: { kind: "call_tool", intent } });
+      (transcript as Message[]).push({
+        role: "tool",
+        intent,
+        observation: {
+          tool: "read_file",
+          value: `export const value${index} = "${"x".repeat(900)}";`,
+          error: null,
+          truncated: false,
+          provenance: { source: "read_file", at: 1_000 + index },
+        },
+      });
+    }
+    return { task: TASK, transcript, iteration: turns, pendingQuestion: null };
+  }
+
+  const TIGHT = {
+    keepRecentTurns: 2,
+    projectionTokenBudget: 900,
+    foldedObservationChars: 80,
+    foldedDecisionChars: 60,
+  } as const;
+
+  it("不给策略 = 全部逐字：请求与投影机制出现之前逐字节相同（golden 等价的显式锚点）", () => {
+    const state = bigState(5);
+    const withoutOption = buildRequest({ state, availableTools: catalog.allNames, identity, tools: catalog.entries });
+    const withDefault = buildRequest({
+      state,
+      availableTools: catalog.allNames,
+      identity,
+      tools: catalog.entries,
+      projection: { keepRecentTurns: Number.MAX_SAFE_INTEGER, projectionTokenBudget: Number.MAX_SAFE_INTEGER, foldedObservationChars: 400, foldedDecisionChars: 200 },
+    });
+
+    expect(JSON.stringify(withDefault.messages)).toBe(JSON.stringify(withoutOption.messages));
+    expect(withoutOption.foldedTurns).toBe(0);
+  });
+
+  it("折叠时：最旧的轮变成一条带 [已折叠] 标记的 user 消息，最近 K 轮逐字保留", () => {
+    const state = bigState(8);
+    const request = buildRequest({
+      state,
+      availableTools: catalog.allNames,
+      identity,
+      tools: catalog.entries,
+      projection: TIGHT,
+    });
+
+    expect(request.foldedTurns).toBeGreaterThan(0);
+    const foldedMessages = request.messages.filter(
+      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("[已折叠]"),
+    );
+    expect(foldedMessages).toHaveLength(1); // 连续折叠轮合并为一条
+    const foldedText = foldedMessages[0]?.role === "user" ? foldedMessages[0].content : "";
+    expect(foldedText).toContain("折叠摘要");
+    expect(foldedText).toContain("src/file-0.ts"); // 证据结构（路径）活着
+    expect(foldedText).not.toContain("src/file-7.ts"); // 最近的轮逐字保留，不在摘要里
+
+    // 最近两轮的观测仍是完整正文
+    const fullBody = request.messages.filter((m) => m.role === "toolResult" && JSON.stringify(m.role === "toolResult" ? m.details : "")?.includes("value7"));
+    expect(fullBody).toHaveLength(1);
+  });
+
+  it("折叠后工具调用的配对关系仍然完好：每个 toolResult 都挂在自己那次 call 上", () => {
+    const state = bigState(8);
+    const request = buildRequest({
+      state,
+      availableTools: catalog.allNames,
+      identity,
+      tools: catalog.entries,
+      projection: TIGHT,
+    });
+
+    const callIds = request.messages
+      .filter((m) => m.role === "assistant")
+      .flatMap((m) => (m.role === "assistant" ? m.content : []))
+      .filter((block) => block.type === "toolCall")
+      .map((block) => block.id);
+    const resultIds = request.messages
+      .filter((m) => m.role === "toolResult")
+      .map((m) => (m.role === "toolResult" ? m.toolCallId : ""));
+
+    // 折叠摘要不产生调用，所以 id 仍然是 verbatim 轮的位置序列，一一配对。
+    expect(resultIds).toEqual(callIds);
+  });
+
+  it("悬空调用在最后一轮被折叠时不补工具结果（摘要已经把「没有回来」说过了）", () => {
+    const state: AgentState = {
+      task: TASK,
+      transcript: [
+        { role: "assistant", decision: { kind: "call_tool", intent: { name: "read_file", args: { path: "a" } } } },
+      ],
+      iteration: 1,
+      pendingQuestion: null,
+    };
+    const request = buildRequest({
+      state,
+      availableTools: catalog.allNames,
+      identity,
+      tools: catalog.entries,
+      projection: { keepRecentTurns: 0, projectionTokenBudget: 1, foldedObservationChars: 80, foldedDecisionChars: 60 },
+    });
+
+    const results = request.messages.filter((m) => m.role === "toolResult");
+    expect(results).toHaveLength(0);
+    const foldedText = request.messages
+      .filter((m) => m.role === "user" && typeof m.content === "string")
+      .map((m) => (m.role === "user" && typeof m.content === "string" ? m.content : ""))
+      .join("\n");
+    expect(foldedText).toContain("调用没有回来");
   });
 });
 

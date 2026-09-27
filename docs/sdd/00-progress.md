@@ -19,7 +19,7 @@
 | T2 | CLI 测试去 dist 化 | 见 T2 commit | ✅（实证：本就不依赖 dist；修正 01-analysis P2-6 归因 + 30s 超时余量） |
 | T3 | 配置层 `src/config/` | 见 T3 commit | ✅（执行顺序在 T4 之后：类型依赖 ProjectionPolicy） |
 | T4 | 对话投影词汇 `src/core/project.ts` | `1129586` | ✅ |
-| T5 | 投影接入适配器（行为等价） | — | ⬜ |
+| T5 | 投影接入适配器（行为等价） | 见 T5 commit | ✅（落点修正：PiModelAdapterOptions，非 RunAgentOptions） |
 | T6 | token 预算默认设防 | — | ⬜ |
 | T7 | `reduceHumanInput`（Core 恢复推进） | — | ⬜ |
 | T8 | 回放激活恢复事件 | — | ⬜ |
