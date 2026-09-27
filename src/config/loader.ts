@@ -17,6 +17,8 @@
  */
 
 import { DEFAULT_BUDGET } from "../runtime/budget.js";
+import type { ProjectionPolicy } from "../core/project.js";
+import type { RunBudget } from "../core/types.js";
 import type { KuseConfig, DeepPartial } from "./schema.js";
 
 /** 配置坏到了不可用的程度。`key` 指出是哪一个键（顶层键则为 null）。 */
@@ -220,22 +222,21 @@ export function mergeConfig(
   layers: readonly (DeepPartial<KuseConfig> | null | undefined)[],
 ): KuseConfig {
   const base = defaultConfig();
-  const out: Record<string, unknown> = { ...base };
+  let model = base.model;
+  let dataRoot = base.dataRoot;
+  let budget: RunBudget = { ...base.budget };
+  let projection: ProjectionPolicy = { ...base.projection };
 
   // 从最低优先级向上覆盖：前面的层赢。
   for (let index = layers.length - 1; index >= 0; index -= 1) {
     const layer = layers[index];
     if (layer === null || layer === undefined) continue;
 
-    if ("model" in layer && layer["model"] !== undefined) out["model"] = layer["model"];
-    if ("dataRoot" in layer && layer["dataRoot"] !== undefined) out["dataRoot"] = layer["dataRoot"];
-
-    for (const objectKey of ["budget", "projection"] as const) {
-      const partial = layer[objectKey];
-      if (partial === undefined) continue;
-      out[objectKey] = { ...(base[objectKey] as object), ...(out[objectKey] as object), ...partial };
-    }
+    if (layer["model"] !== undefined) model = layer["model"];
+    if (layer["dataRoot"] !== undefined) dataRoot = layer["dataRoot"];
+    if (layer["budget"] !== undefined) budget = { ...budget, ...layer["budget"] };
+    if (layer["projection"] !== undefined) projection = { ...projection, ...layer["projection"] };
   }
 
-  return out as KuseConfig;
+  return { model, dataRoot, budget, projection };
 }

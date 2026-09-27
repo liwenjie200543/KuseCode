@@ -8,7 +8,7 @@ import {
   mergeConfig,
   parseConfigFile,
 } from "../src/config/loader.js";
-import type { KuseConfig } from "../src/config/schema.js";
+import type { DeepPartial, KuseConfig } from "../src/config/schema.js";
 
 // ---------------------------------------------------------------------------
 // 默认值
@@ -115,7 +115,7 @@ describe("configFromEnv", () => {
 // ---------------------------------------------------------------------------
 
 describe("mergeConfig", () => {
-  const file: Partial<KuseConfig> = {
+  const file: DeepPartial<KuseConfig> = {
     model: "from-file",
     budget: { maxIterations: 8 },
   };
