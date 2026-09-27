@@ -66,6 +66,7 @@ export {
   isTerminal,
   observationsOf,
   reduce,
+  reduceHumanInput,
   renderContext,
   runCoreLoop,
   step,

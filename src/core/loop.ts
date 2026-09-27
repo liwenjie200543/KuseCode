@@ -179,6 +179,32 @@ export function reduce(
   };
 }
 
+/**
+ * 应用**人的回答**，产出新状态。**纯函数。**（SDD T7，docs/sdd/03-architecture.md §3.2）
+ *
+ * 它与 `reduce` 同属一个函数家族——实时执行、事件回放、单元测试三路共用，
+ * 是「人的回答进入 transcript」的**唯一**合法路径。在此之前 `Message` 的
+ * `role: "human"` 变体没有任何推进函数能产生它，`replayAgentState` 因此只能
+ * 对 `human_input_received` 抛"重建不了"——这条缝隙由本函数闭合。
+ *
+ * 语义逐条：
+ * - 回答进 transcript（`role: "human"`）：状态里必须留下"人说了什么"。
+ * - `pendingQuestion` 清空：与"任何非 `ask_human` 决策清空它"是同一条规则——
+ *   于是「有问题待答」恒等价于「最后一次决策是提问」，恢复路径不新增例外。
+ * - **`iteration` 不变**：它数的是"模型决策轮"，人的回答不是一轮决策，
+ *   不该消耗迭代预算——但恢复后的第一轮照样要过预算守卫（那是执法，不是推进）。
+ * - 什么也不校验：答案是空串还是天书，是**入口**（Runtime 的 `resume`）的
+ *   职责——`reduceHumanInput` 是全函数，任何字符串都有定义良好的结果。
+ */
+export function reduceHumanInput(state: AgentState, answer: string): AgentState {
+  return {
+    task: state.task,
+    transcript: [...state.transcript, { role: "human", answer }],
+    iteration: state.iteration,
+    pendingQuestion: null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 一步：问模型
 // ---------------------------------------------------------------------------

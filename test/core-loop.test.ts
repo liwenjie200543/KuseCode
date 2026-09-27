@@ -10,6 +10,7 @@ import {
   isTerminal,
   observationsOf,
   reduce,
+  reduceHumanInput,
   renderContext,
   runCoreLoop,
   step,
@@ -317,6 +318,63 @@ describe("reduce", () => {
     const moved = reduce(waiting, callTool(readFile), observation);
 
     expect(waiting.pendingQuestion).toBe("先看哪个模块？");
+    expect(moved.pendingQuestion).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reduceHumanInput（SDD T7）：人的回答进入 transcript 的唯一合法路径。
+// 与 reduce 同族——实时/回放/测试三路共用；iteration 不变（轮数模型决策轮）。
+// ---------------------------------------------------------------------------
+describe("reduceHumanInput", () => {
+  it("回答进 transcript（role: human），pendingQuestion 清空", () => {
+    const waiting = reduce(emptyState(), { kind: "ask_human", question: "以哪条为准？" });
+    const resumed = reduceHumanInput(waiting, "以第二条为准");
+
+    expect(resumed.transcript.at(-1)).toEqual({ role: "human", answer: "以第二条为准" });
+    expect(resumed.pendingQuestion).toBeNull();
+  });
+
+  it("iteration 不变：人的回答不是模型决策轮，不消耗迭代预算", () => {
+    const first = reduce(emptyState(), callTool(readFile), observation);
+    const waiting = reduce(first, { kind: "ask_human", question: "继续吗？" });
+    const resumed = reduceHumanInput(waiting, "继续");
+
+    expect(waiting.iteration).toBe(2);
+    expect(resumed.iteration).toBe(2);
+  });
+
+  it("不改动入参，返回新的状态对象；同一输入永远同一输出", () => {
+    const waiting = Object.freeze({
+      task,
+      transcript: Object.freeze([
+        { role: "assistant", decision: { kind: "ask_human", question: "继续吗？" } },
+      ] as Message[]),
+      iteration: 1,
+      pendingQuestion: "继续吗？",
+    } as AgentState);
+
+    const a = reduceHumanInput(waiting, "继续");
+    const b = reduceHumanInput(waiting, "继续");
+
+    expect(a).not.toBe(waiting);
+    expect(a).toEqual(b);
+    expect(waiting.transcript).toHaveLength(1);
+    expect(waiting.pendingQuestion).toBe("继续吗？");
+  });
+
+  it("恢复后的循环可以继续推进：reduce 消费 resume 出的状态不留残迹", () => {
+    const waiting = reduce(emptyState(), { kind: "ask_human", question: "继续吗？" });
+    const resumed = reduceHumanInput(waiting, "继续");
+    const moved = reduce(resumed, callTool(readFile), observation);
+
+    expect(moved.iteration).toBe(2);
+    expect(moved.transcript.map((message) => message.role)).toEqual([
+      "assistant",
+      "human",
+      "assistant",
+      "tool",
+    ]);
     expect(moved.pendingQuestion).toBeNull();
   });
 });
