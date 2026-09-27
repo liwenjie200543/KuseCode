@@ -16,7 +16,7 @@
 | 任务 | 名称 | Commit | 状态 |
 |---|---|---|---|
 | T1 | 契约测试扩展（no-runtime-deps 覆盖新模块） | 见 T1 commit | ✅ |
-| T2 | CLI 测试去 dist 化 | — | ⬜ |
+| T2 | CLI 测试去 dist 化 | 见 T2 commit | ✅（实证：本就不依赖 dist；修正 01-analysis P2-6 归因 + 30s 超时余量） |
 | T3 | 配置层 `src/config/` | — | ⬜ |
 | T4 | 对话投影词汇 `src/core/project.ts` | — | ⬜ |
 | T5 | 投影接入适配器（行为等价） | — | ⬜ |

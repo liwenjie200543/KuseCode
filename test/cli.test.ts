@@ -24,10 +24,18 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { EXIT, HELP, flagOn, flagValue, main, parseArgs, unknownFlags } from "../src/cli/index.js";
 import type { CliIo } from "../src/cli/index.js";
 import { REDACTED } from "../src/core/redact.js";
+
+// SDD T2（docs/sdd/04-implementation-plan.md）：这个文件**不**依赖 dist——
+// `main(argv, io)` 在进程内直接跑 TS 源码（rm -rf dist 后 42/42 全绿，实测）。
+// 但它的用例里有真的 Run：首次动态加载 SDK（provider 目录 ~1s 起步）加真实的
+// 文件系统 I/O，在冷缓存的机器上（npm ci 刚结束、全量并行收集）曾被观测到
+// 单例 40s。给整个文件 30s 的用例超时余量，换 fresh clone 上 `npm test`
+// 的稳定绿；它仍然是有界的——真挂起的测试照样会红。
+vi.setConfig({ testTimeout: 30_000 });
 
 // ---------------------------------------------------------------------------
 // 夹具：一个真的临时仓库 + 一个把输出收起来的 IO

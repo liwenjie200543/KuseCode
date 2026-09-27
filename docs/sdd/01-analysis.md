@@ -239,6 +239,11 @@ cli  desktop（消费 runtime + store + tools + adapter；desktop 经 src/index 
 6. **测试对构建产物的隐式依赖**：cli.test.ts 走 `bin/kuse.mjs` → `dist/`，
    没先 build 就超时（本次实测复现）。应在测试脚本/CI 里固化 build 前置，
    或让 CLI 测试直接跑 src。
+   > **T2 实施时的修正（2026-09-28）**：实测推翻了这条归因——`test/cli.test.ts`
+   > 全部 42 例在进程内直接调 `main(argv, io)`，**完全不经过** `bin/kuse.mjs`
+   > 与 `dist/`（`rm -rf dist` 后全绿）。首次全量运行时的 2 例超时真实原因是
+   > npm ci 之后冷缓存机器上的资源争用（该次运行的 collect 阶段共 143s）。
+   > 处置：给该文件加 30s 用例超时余量（有界），分析结论以本修正为准。
 7. **配置体系缺失**：全部配置靠 CLI flag + 环境变量（`KUSECODE_MODEL` 等），
    无配置文件、无 schema 校验；预算默认值硬编码在 `budget.ts`。
    （注：观测截断 8k "故意不做成配置项" 是有文档理由的决定，不应翻案。）
