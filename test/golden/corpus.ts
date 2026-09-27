@@ -126,6 +126,13 @@ export interface GoldenCase {
    * 语料本身不用它——它会让两条路的日志不等价。
    */
   readonly cancelAtCall?: number;
+  /**
+   * 挂起后人的回答（SDD T10）。给了它，驱动方就跑**两段**：
+   * 先 `run()` 到挂起，再带着这个回答 `resume()` 到终态。
+   * 剧本的下标跨两段连续——恢复段的模型从"上一次决策"之后接着演。
+   * 两条路的**全量日志**（挂起段 + 恢复段）必须逐字节一致。
+   */
+  readonly resume?: { readonly answer: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +343,29 @@ export const GOLDEN_CASES: readonly GoldenCase[] = Object.freeze([
       { do: "list_dir", path: "." },
       { do: "ask", question: "这个仓库的验收标准是什么？" },
     ],
+  },
+
+  {
+    name: "09-ask-answer-resume",
+    pins: "挂起→应答→恢复→完成：回答与继续接在原日志尾部，恢复段读人指的文件，终态 complete（SDD T10）。",
+    goal: "这个仓库的验收标准是什么？",
+    checks: ["需要人回答的问题"],
+    files: DEMO_FILES,
+    steps: [
+      { do: "ask", question: "验收标准写在哪个文件里？" },
+      { do: "read_file", path: "notes/spec.md", startLine: 1, endLine: 5 },
+      {
+        do: "report",
+        summary: "验收标准在 notes/spec.md：归档必须可关闭。",
+        claims: [
+          {
+            text: "规格要求归档必须可关闭。",
+            evidence: [{ path: "notes/spec.md", lines: [3, 3], excerpt: "- 归档必须可关闭。" }],
+          },
+        ],
+      },
+    ],
+    resume: { answer: "写在 notes/spec.md 里" },
   },
 ]);
 

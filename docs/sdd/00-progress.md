@@ -24,7 +24,7 @@
 | T7 | `reduceHumanInput`（Core 恢复推进） | 见 T7 commit | ✅ |
 | T8 | 回放激活恢复事件 | 见 T8 commit | ✅ |
 | T9 | `Runtime.resume` | 见 T9 commit | ✅（拒绝在调用点同步发生，先于一切写入） |
-| T10 | golden 挂起-恢复固定件 | — | ⬜ |
+| T10 | golden 挂起-恢复固定件 | 见 T10 commit | ✅（09 号语料，双路径逐字节一致） |
 | T11 | Toolbox 升格为通用组装点 | — | ⬜ |
 | T12 | 装配层 `src/bootstrap/`（createKuse） | — | ⬜ |
 | T13 | CLI 消费装配层（行为不变） | — | ⬜ |

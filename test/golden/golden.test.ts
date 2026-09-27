@@ -229,11 +229,20 @@ describe("golden：语料的覆盖面", () => {
       const terminal = events.filter((event) =>
         ["run_completed", "run_failed", "run_cancelled", "human_input_requested"].includes(event.type),
       );
-      // 一次 Run 恰好一个收场。零个说明日志停在没有结尾的地方，两个说明它自相矛盾。
-      expect(terminal.map((event) => event.type), `${c.name} 的收场`).toHaveLength(1);
-      const event = terminal[0];
-      if (event === undefined) continue;
-      const key = event.type === "run_completed" ? `completed/${event.status}` : event.type;
+      // 挂起不是终态，所以"挂起→应答→恢复"的语料（SDD T10，有 resume 字段）
+      // 是「挂起 + 终态」两条；其余的语料恰好一条。零个说明日志停在没有结尾
+      // 的地方，两个以上说明它自相矛盾。
+      const expectedTerminals = c.resume === undefined ? 1 : 2;
+      expect(
+        terminal.map((event) => event.type),
+        `${c.name} 的收场`,
+      ).toHaveLength(expectedTerminals);
+      if (c.resume !== undefined) {
+        expect(terminal[0]?.type, `${c.name} 先挂起`).toBe("human_input_requested");
+      }
+      const last = terminal.at(-1);
+      if (last === undefined) continue;
+      const key = last.type === "run_completed" ? `completed/${last.status}` : last.type;
       endings.set(key, [...(endings.get(key) ?? []), c.name]);
     }
 

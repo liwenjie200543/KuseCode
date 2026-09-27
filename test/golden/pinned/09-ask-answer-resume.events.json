@@ -1,0 +1,238 @@
+[
+  {
+    "runId": "golden-run-1",
+    "sequence": 0,
+    "timestamp": 1700000000000,
+    "type": "run_started"
+  },
+  {
+    "model": "golden-model",
+    "runId": "golden-run-1",
+    "sequence": 1,
+    "timestamp": 1700000000000,
+    "type": "model_requested"
+  },
+  {
+    "decision": {
+      "kind": "ask_human",
+      "question": "验收标准写在哪个文件里？"
+    },
+    "runId": "golden-run-1",
+    "sequence": 2,
+    "timestamp": 1700000000000,
+    "type": "decision_made"
+  },
+  {
+    "usage": {
+      "inputTokens": "<provider>",
+      "outputTokens": "<provider>",
+      "toolCalls": 0,
+      "durationMs": 0,
+      "model": "golden-model"
+    },
+    "runId": "golden-run-1",
+    "sequence": 3,
+    "timestamp": 1700000000000,
+    "type": "usage_reported"
+  },
+  {
+    "question": "验收标准写在哪个文件里？",
+    "runId": "golden-run-1",
+    "sequence": 4,
+    "timestamp": 1700000000000,
+    "type": "human_input_requested"
+  },
+  {
+    "input": "写在 notes/spec.md 里",
+    "runId": "golden-run-1",
+    "sequence": 5,
+    "timestamp": 1700000000000,
+    "type": "human_input_received"
+  },
+  {
+    "runId": "golden-run-1",
+    "sequence": 6,
+    "timestamp": 1700000000000,
+    "type": "run_resumed"
+  },
+  {
+    "model": "golden-model",
+    "runId": "golden-run-1",
+    "sequence": 7,
+    "timestamp": 1700000000000,
+    "type": "model_requested"
+  },
+  {
+    "decision": {
+      "kind": "call_tool",
+      "intent": {
+        "name": "read_file",
+        "args": {
+          "path": "notes/spec.md",
+          "startLine": 1,
+          "endLine": 5
+        }
+      }
+    },
+    "runId": "golden-run-1",
+    "sequence": 8,
+    "timestamp": 1700000000000,
+    "type": "decision_made"
+  },
+  {
+    "toolCallId": "golden-tool-1",
+    "toolName": "read_file",
+    "runId": "golden-run-1",
+    "sequence": 9,
+    "timestamp": 1700000000000,
+    "type": "tool_started"
+  },
+  {
+    "toolCallId": "golden-tool-1",
+    "toolName": "read_file",
+    "status": "success",
+    "result": {
+      "path": "notes/spec.md",
+      "startLine": 1,
+      "endLine": 3,
+      "totalLines": 3,
+      "lines": [
+        {
+          "n": 1,
+          "text": "# 规格"
+        },
+        {
+          "n": 2,
+          "text": ""
+        },
+        {
+          "n": 3,
+          "text": "- 归档必须可关闭。"
+        }
+      ]
+    },
+    "error": null,
+    "durationMs": 0,
+    "runId": "golden-run-1",
+    "sequence": 10,
+    "timestamp": 1700000000000,
+    "type": "tool_completed"
+  },
+  {
+    "name": "read_file",
+    "observation": {
+      "tool": "read_file",
+      "value": {
+        "path": "notes/spec.md",
+        "startLine": 1,
+        "endLine": 3,
+        "totalLines": 3,
+        "lines": [
+          {
+            "n": 1,
+            "text": "# 规格"
+          },
+          {
+            "n": 2,
+            "text": ""
+          },
+          {
+            "n": 3,
+            "text": "- 归档必须可关闭。"
+          }
+        ]
+      },
+      "error": null,
+      "truncated": false,
+      "provenance": {
+        "source": "read_file",
+        "at": 1700000000000
+      }
+    },
+    "runId": "golden-run-1",
+    "sequence": 11,
+    "timestamp": 1700000000000,
+    "type": "observation_added"
+  },
+  {
+    "model": "golden-model",
+    "runId": "golden-run-1",
+    "sequence": 12,
+    "timestamp": 1700000000000,
+    "type": "model_requested"
+  },
+  {
+    "decision": {
+      "kind": "respond",
+      "report": {
+        "summary": "验收标准在 notes/spec.md：归档必须可关闭。",
+        "claims": [
+          {
+            "text": "规格要求归档必须可关闭。",
+            "evidence": [
+              {
+                "path": "notes/spec.md",
+                "lines": [
+                  3,
+                  3
+                ],
+                "excerpt": "- 归档必须可关闭。",
+                "provenance": {
+                  "source": "model",
+                  "at": 1700000000000
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "runId": "golden-run-1",
+    "sequence": 13,
+    "timestamp": 1700000000000,
+    "type": "decision_made"
+  },
+  {
+    "usage": {
+      "inputTokens": "<provider>",
+      "outputTokens": "<provider>",
+      "toolCalls": 1,
+      "durationMs": 0,
+      "model": "golden-model"
+    },
+    "runId": "golden-run-1",
+    "sequence": 14,
+    "timestamp": 1700000000000,
+    "type": "usage_reported"
+  },
+  {
+    "status": "complete",
+    "result": {
+      "summary": "验收标准在 notes/spec.md：归档必须可关闭。",
+      "claims": [
+        {
+          "text": "规格要求归档必须可关闭。",
+          "evidence": [
+            {
+              "path": "notes/spec.md",
+              "lines": [
+                3,
+                3
+              ],
+              "excerpt": "- 归档必须可关闭。",
+              "provenance": {
+                "source": "model",
+                "at": 1700000000000
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "missingMaterial": [],
+    "runId": "golden-run-1",
+    "sequence": 15,
+    "timestamp": 1700000000000,
+    "type": "run_completed"
+  }
+]

@@ -38,6 +38,7 @@ import { catalogFromToolbox } from "../../src/adapter/pi/catalog.js";
 import { ASK_HUMAN_TOOL, SUBMIT_REPORT_TOOL } from "../../src/adapter/pi/protocol.js";
 import type {
   AgentEvent,
+  AgentRuntime,
   Decision,
   Evidence,
   Report,
@@ -282,6 +283,29 @@ function scaffold(c: GoldenCase, repoRoot: string) {
   return { box, runner, log: memoryRunLog(), task: taskOf(c, repoRoot), controller };
 }
 
+/**
+ * 语料可能要求两段跑（SDD T10：`c.resume` 给出人的回答）。
+ * 挂起段跑完之后，带着**全部既有事件**恢复；剧本下标不重置——
+ * 恢复段的模型从上一次决策之后接着演。两段的事件接成一条完整日志。
+ */
+async function finish(
+  c: GoldenCase,
+  runtime: AgentRuntime,
+  task: Task,
+  controller: AbortController,
+  firstEvents: readonly AgentEvent[],
+): Promise<readonly AgentEvent[]> {
+  if (c.resume === undefined) return firstEvents;
+  const runId = firstEvents[0]?.runId;
+  if (runId === undefined) throw new Error("挂起段一条事件都没有：语料的驱动出了问题");
+  const resumeFn = runtime.resume;
+  if (resumeFn === undefined) throw new Error("这个 Runtime 没有实现 resume：恢复语料无法驱动");
+  const second = await collect(
+    resumeFn({ runId, task, events: firstEvents, answer: c.resume.answer }, controller.signal),
+  );
+  return [...firstEvents, ...second];
+}
+
 /** 假模型端口那一路。Core 的循环、执行层、预算、终止——**没有 SDK**。 */
 export async function driveCore(c: GoldenCase, repoRoot: string): Promise<GoldenRun> {
   const { runner, log, task, controller } = scaffold(c, repoRoot);
@@ -306,7 +330,8 @@ export async function driveCore(c: GoldenCase, repoRoot: string): Promise<Golden
     sleep: noSleep,
   });
 
-  const events = await collect(runtime.run(task, controller.signal));
+  const firstEvents = await collect(runtime.run(task, controller.signal));
+  const events = await finish(c, runtime, task, controller, firstEvents);
   return { events, trace: traceOf(events), requests: [] };
 }
 
@@ -357,7 +382,8 @@ export async function driveSdk(c: GoldenCase, repoRoot: string): Promise<GoldenR
     sleep: noSleep,
   });
 
-  const events = await collect(runtime.run(task, controller.signal));
+  const firstEvents = await collect(runtime.run(task, controller.signal));
+  const events = await finish(c, runtime, task, controller, firstEvents);
   return { events, trace: traceOf(events), requests };
 }
 
