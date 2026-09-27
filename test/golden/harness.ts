@@ -55,8 +55,9 @@ import { createRuntime } from "../../src/runtime/run-agent.js";
 import { traceOf } from "../../src/runtime/trace.js";
 import type { RunTrace } from "../../src/runtime/trace.js";
 import { createToolRunner } from "../../src/runtime/tool-runner.js";
-import { createRepoTools } from "../../src/tools/repo-tools.js";
-import type { Toolbox } from "../../src/tools/repo-tools.js";
+import { createRepoToolSpecs } from "../../src/tools/repo-tools.js";
+import { createToolbox } from "../../src/toolbox.js";
+import type { Toolbox } from "../../src/toolbox.js";
 import { decidingModel } from "../../src/testing/fake-model.js";
 
 import { FIXTURE_DIR, GOLDEN_MODEL, GOLDEN_NOW } from "./corpus.js";
@@ -257,7 +258,7 @@ function stepAt(c: GoldenCase, index: number): ScriptStep {
 
 /** 两条路共用的脚手架：同一批工具、同一套身份与时钟、同一条内存日志。 */
 function scaffold(c: GoldenCase, repoRoot: string) {
-  const box: Toolbox = createRepoTools({ repoRoot });
+  const box: Toolbox = createToolbox(createRepoToolSpecs(), { repoRoot, clock: now });
   const controller = new AbortController();
   let calls = 0;
 
@@ -271,11 +272,11 @@ function scaffold(c: GoldenCase, repoRoot: string) {
    * 于是这次调用落成一条 error 观测，而 Run 停在下一个检查点上。
    */
   const cancelling: ToolPort = {
-    names: box.port.names,
+    names: box.rawPort.names,
     async execute(intent: ToolIntent, signal: AbortSignal): Promise<ToolOutcome> {
       calls += 1;
       if (c.cancelAtTool === calls) controller.abort();
-      return box.port.execute(intent, signal);
+      return box.rawPort.execute(intent, signal);
     },
   };
 

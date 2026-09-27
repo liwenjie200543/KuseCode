@@ -37,7 +37,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { auditRun } from "../../src/runtime/verify.js";
-import { materialReader, createRepoTools } from "../../src/tools/repo-tools.js";
+import { createRepoToolSpecs } from "../../src/tools/repo-tools.js";
+import { createToolbox } from "../../src/toolbox.js";
 import type { AgentEvent } from "../../src/core/types.js";
 import { GOLDEN_CASES, caseNamed } from "./corpus.js";
 import type { GoldenCase } from "./corpus.js";
@@ -299,7 +300,9 @@ describe("golden：核对与缺失清单", () => {
     if (c === undefined) throw new Error("语料的第一条不见了");
     await withFixture(c.files, async (repoRoot) => {
       const run = await driveCore(c, repoRoot);
-      const audit = auditOf(auditRun(run.events, materialReader(createRepoTools({ repoRoot }))));
+      const audit = auditOf(
+        auditRun(run.events, createToolbox(createRepoToolSpecs(), { repoRoot, clock: () => 0 }).materialReader),
+      );
       // `total` 数的是**证据条数**，不是论断条数：一条没有依据的论断贡献的是
       // `unbacked` 一项，不贡献 `total`。这两个数字回答问题的方式不同。
       expect(audit.total).toBe(1);
@@ -335,7 +338,9 @@ describe("golden：核对与缺失清单", () => {
     if (c === undefined) throw new Error("语料的第三条不见了");
     await withFixture(c.files, async (repoRoot) => {
       const run = await driveCore(c, repoRoot);
-      const audit = auditOf(auditRun(run.events, materialReader(createRepoTools({ repoRoot }))));
+      const audit = auditOf(
+        auditRun(run.events, createToolbox(createRepoToolSpecs(), { repoRoot, clock: () => 0 }).materialReader),
+      );
       expect(audit.truncatedObservations).toBe(1);
       // 被截断的观测里结构已经没了，材料读不出来，所以那条断言"找不到"——
       // 但它不能被说成"没看过"：那是一次假指控。

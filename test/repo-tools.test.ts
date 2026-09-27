@@ -22,12 +22,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ToolIntent, ToolOutcome } from "../src/core/types.js";
-import {
-  ToolArgumentError,
-  createRepoTools,
-  declaredKeysOf,
-  resolveInsideRepo,
-} from "../src/tools/repo-tools.js";
+import { createRepoToolSpecs, resolveInsideRepo } from "../src/tools/repo-tools.js";
+import { ToolArgumentError, createToolbox, declaredKeysOf } from "../src/toolbox.js";
 
 let root = "";
 
@@ -64,12 +60,14 @@ afterAll(async () => {
 });
 
 function toolbox() {
-  return createRepoTools({ repoRoot: root });
+  return createToolbox(createRepoToolSpecs(), { repoRoot: root, clock: () => 0 });
 }
 
 /** 跑一次工具，顺便把"绝不抛异常"这件事变成每条用例的默认前提。 */
 async function exec(intent: ToolIntent, signal: AbortSignal = new AbortController().signal): Promise<ToolOutcome> {
-  const outcome = await toolbox().port.execute(intent, signal);
+  // 取消相关的用例瞄准**裸端口**的契约（中止 → tool_failed 观测）；
+    // Runtime 走的 gated 端口在那里是"原样上抛"，由 runtime-resume/budget 测试钉住。
+    const outcome = await toolbox().rawPort.execute(intent, signal);
   expect(outcome).toHaveProperty("value");
   expect(outcome).toHaveProperty("error");
   return outcome;
@@ -413,7 +411,7 @@ describe("被点名的目录按路径跳过", () => {
     await mkdir(join(root, "src", "runs"), { recursive: true });
     await writeFile(join(root, "src", "runs", "keep.txt"), `${OWN_ARTIFACT}\n`);
 
-    const scoped = createRepoTools({ repoRoot: root, ignore: ["vendor/runs"] });
+    const scoped = createToolbox(createRepoToolSpecs(), { repoRoot: root, clock: () => 0, ignorePaths: ["vendor/runs"] });
     const outcome = await scoped.port.execute(
       { name: "search_text", args: { pattern: OWN_ARTIFACT } },
       new AbortController().signal,
@@ -426,7 +424,7 @@ describe("被点名的目录按路径跳过", () => {
   });
 
   it("不点名的时候它照常是材料（这条规则是配置，不是内置的假设）", async () => {
-    const plain = createRepoTools({ repoRoot: root });
+    const plain = createToolbox(createRepoToolSpecs(), { repoRoot: root, clock: () => 0 });
     const outcome = await plain.port.execute(
       { name: "search_text", args: { pattern: OWN_ARTIFACT } },
       new AbortController().signal,
@@ -437,7 +435,7 @@ describe("被点名的目录按路径跳过", () => {
   });
 
   it("list_dir 里也看不见它", async () => {
-    const scoped = createRepoTools({ repoRoot: root, ignore: ["vendor/runs"] });
+    const scoped = createToolbox(createRepoToolSpecs(), { repoRoot: root, clock: () => 0, ignorePaths: ["vendor/runs"] });
     const outcome = await scoped.port.execute(
       { name: "list_dir", args: { path: "vendor" } },
       new AbortController().signal,
@@ -451,7 +449,7 @@ describe("被点名的目录按路径跳过", () => {
     // 用 `join` 拼出真的反斜杠，而不是写在字面量里：写在字面量里会被转义层
     // 吃掉一层，读的人分不清它到底是几个，而这条用例要测的恰恰就是那一个字符。
     const windowsStyle = `${["vendor", "runs"].join("\\")}\\`;
-    const scoped = createRepoTools({ repoRoot: root, ignore: [windowsStyle] });
+    const scoped = createToolbox(createRepoToolSpecs(), { repoRoot: root, clock: () => 0, ignorePaths: [windowsStyle] });
     const outcome = await scoped.port.execute(
       { name: "list_dir", args: { path: "vendor" } },
       new AbortController().signal,

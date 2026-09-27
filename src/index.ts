@@ -182,15 +182,15 @@ export { DEFAULT_RETRY, isRetryable, retryDelayMs, retryPolicyFrom, shouldRetry 
 export type { RetryPolicy } from "./runtime/retry.js";
 
 // 真实工具：读仓库。**不是**适配器的一部分——它们只认 `ToolPort` 与纯 JSON Schema，
-// 所以"工具的知识"与"SDK 的词汇"在这里是分开的两件事。
+// 所以"工具的知识"与"SDK 的词汇"在这里是分开的两件事。SDD T11 之后它只交出
+// spec 清单；组装（端口/关卡/materialReader）是任何工具集共用的事，在 toolbox。
+export { createRepoToolSpecs, resolveInsideRepo } from "./tools/repo-tools.js";
+export type { JsonObjectSchema, ToolSpec, Toolbox } from "./toolbox.js";
 export {
+  DEFAULT_IGNORED_DIRECTORY_NAMES,
   ToolArgumentError,
-  createRepoTools,
-  declaredKeysOf,
-  materialReader,
-  resolveInsideRepo,
-} from "./tools/repo-tools.js";
-export type { JsonObjectSchema, ToolSpec, Toolbox } from "./tools/repo-tools.js";
+  createToolbox,
+} from "./toolbox.js";
 
 // ---------------------------------------------------------------------------
 // 产品面：一个人怎么发起一次 Run、又怎么看懂它。

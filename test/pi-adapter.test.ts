@@ -34,7 +34,8 @@ import {
   unknownUsage,
   usageFromMessage,
 } from "../src/adapter/pi/index.js";
-import { createRepoTools } from "../src/tools/repo-tools.js";
+import { createRepoToolSpecs } from "../src/tools/repo-tools.js";
+import { createToolbox } from "../src/toolbox.js";
 
 // ---------------------------------------------------------------------------
 // 搭一个最小状态
@@ -529,7 +530,7 @@ describe("用量：不知道就回答 null，不是 0", () => {
 // ---------------------------------------------------------------------------
 
 describe("状态怎么翻成一次请求", () => {
-  const box = createRepoTools({ repoRoot: "." });
+  const box = createToolbox(createRepoToolSpecs(), { repoRoot: ".", clock: () => 0 });
   const catalog = catalogFromToolbox(box);
   const identity = { api: "anthropic-messages", provider: "anthropic", model: "claude-sonnet" };
 
@@ -664,7 +665,7 @@ describe("状态怎么翻成一次请求", () => {
 // ---------------------------------------------------------------------------
 
 describe("请求级对话投影", () => {
-  const box = createRepoTools({ repoRoot: "." });
+  const box = createToolbox(createRepoToolSpecs(), { repoRoot: ".", clock: () => 0 });
   const catalog = catalogFromToolbox(box);
   const identity = { api: "anthropic-messages", provider: "anthropic", model: "claude-sonnet" };
 
@@ -792,7 +793,7 @@ describe("请求级对话投影", () => {
 
 describe("工具目录", () => {
   it("真实工具 + 两个协议工具，各归各的 kind", () => {
-    const catalog = catalogFromToolbox(createRepoTools({ repoRoot: "." }));
+    const catalog = catalogFromToolbox(createToolbox(createRepoToolSpecs(), { repoRoot: ".", clock: () => 0 }));
     expect(catalog.repoNames).toEqual(["read_file", "list_dir", "search_text"]);
     expect([...catalog.allNames].sort()).toEqual(
       ["ask_human", "list_dir", "read_file", "search_text", "submit_report"].sort(),
@@ -802,7 +803,7 @@ describe("工具目录", () => {
   });
 
   it("协议工具不在 repoNames 里：它们从不交给执行层", () => {
-    const catalog = catalogFromToolbox(createRepoTools({ repoRoot: "." }));
+    const catalog = catalogFromToolbox(createToolbox(createRepoToolSpecs(), { repoRoot: ".", clock: () => 0 }));
     expect(catalog.repoNames).not.toContain(SUBMIT_REPORT_TOOL);
     expect(catalog.repoNames).not.toContain(ASK_HUMAN_TOOL);
   });
@@ -817,7 +818,7 @@ describe("工具目录", () => {
   });
 
   it("协议工具的 schema 是 object，且 required 由 schema 自己说了算", () => {
-    const catalog = catalogFromToolbox(createRepoTools({ repoRoot: "." }));
+    const catalog = catalogFromToolbox(createToolbox(createRepoToolSpecs(), { repoRoot: ".", clock: () => 0 }));
     const submit = catalog.entry(SUBMIT_REPORT_TOOL);
     expect(submit?.parameters.type).toBe("object");
     expect(submit?.parameters.required).toEqual(["summary"]);
@@ -827,7 +828,7 @@ describe("工具目录", () => {
 
   it("真实工具的 schema 里声明的键与校验函数认的键一致", () => {
     // 两份实现（声明给模型看 / 校验给执行用）不该分叉。这条断言把分叉变成测试失败。
-    const box = createRepoTools({ repoRoot: "." });
+    const box = createToolbox(createRepoToolSpecs(), { repoRoot: ".", clock: () => 0 });
     const probes: Record<string, Record<string, unknown>> = {
       read_file: { path: "a" },
       list_dir: {},

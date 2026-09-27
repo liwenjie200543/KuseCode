@@ -25,7 +25,8 @@ import { auditReport, auditRun } from "../src/runtime/verify.js";
 import { scriptedModel } from "../src/testing/fake-model.js";
 import { fakeClock } from "../src/testing/fake-tools.js";
 import { OBSERVATION_CHAR_LIMIT } from "../src/runtime/tool-runner.js";
-import { createRepoTools, materialReader } from "../src/tools/repo-tools.js";
+import { createRepoToolSpecs } from "../src/tools/repo-tools.js";
+import { createToolbox } from "../src/toolbox.js";
 
 // ---------------------------------------------------------------------------
 // 夹具：一个真的临时仓库（被 mock 的文件系统证明不了任何关于路径的事）
@@ -209,10 +210,10 @@ describe("截断的观测让核对失去确定性", () => {
 
 describe("materialReader 按工具名分派", () => {
   async function read(tool: string, args: Record<string, unknown>): Promise<readonly MaterialRef[]> {
-    const box = createRepoTools({ repoRoot: root });
+    const box = createToolbox(createRepoToolSpecs(), { repoRoot: root, clock: fakeClock() });
     const outcome = await box.port.execute({ name: tool, args }, new AbortController().signal);
     expect(outcome.error).toBeNull();
-    return materialReader(box)({ tool, value: outcome.value });
+    return box.materialReader({ tool, value: outcome.value });
   }
 
   it("read_file：路径 + 真正返回的那个行窗口", async () => {
@@ -243,8 +244,8 @@ describe("materialReader 按工具名分派", () => {
   });
 
   it("不认识的工具名 → 空数组（保守但诚实：这次调用没有提供可引用的材料）", async () => {
-    const box = createRepoTools({ repoRoot: root });
-    const refs = materialReader(box)({ tool: "谁也不是", value: { path: "a", lines: 1 } });
+    const box = createToolbox(createRepoToolSpecs(), { repoRoot: root, clock: fakeClock() });
+    const refs = box.materialReader({ tool: "谁也不是", value: { path: "a", lines: 1 } });
 
     expect(refs).toEqual([]);
   });
@@ -263,7 +264,7 @@ const task: Task = {
 
 /** 真跑一次：真仓库工具、真执行层、真事件日志。 */
 async function liveRun(script: readonly Decision[]): Promise<readonly AgentEvent[]> {
-  const box = createRepoTools({ repoRoot: root });
+  const box = createToolbox(createRepoToolSpecs(), { repoRoot: root, clock: fakeClock() });
   const runner = createToolRunner({ tools: box.port, clock: fakeClock() });
   const runtime = createRuntime({
     model: scriptedModel(script),
@@ -279,8 +280,8 @@ async function liveRun(script: readonly Decision[]): Promise<readonly AgentEvent
   return events;
 }
 
-const readerFor = (): ReturnType<typeof materialReader> =>
-  materialReader(createRepoTools({ repoRoot: root }));
+const readerFor = (): ReturnType<typeof createToolbox>["materialReader"] =>
+  createToolbox(createRepoToolSpecs(), { repoRoot: root, clock: fakeClock() }).materialReader;
 
 describe("auditRun 端到端", () => {
   it("引用它真的读到过的行 → 对得上", async () => {

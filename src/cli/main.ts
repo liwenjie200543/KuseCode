@@ -32,14 +32,14 @@ import process from "node:process";
 import { redactor, secretsFromEnv } from "../core/redact.js";
 import type { ModelPort, Task } from "../core/types.js";
 import { createRuntime } from "../runtime/run-agent.js";
-import { createToolRunner } from "../runtime/tool-runner.js";
 import { traceOf } from "../runtime/trace.js";
 import type { RunTrace } from "../runtime/trace.js";
 import { auditRun } from "../runtime/verify.js";
 import { createSessionStore } from "../store/session-store.js";
 import type { SessionStore } from "../store/session-store.js";
-import { createRepoTools, materialReader } from "../tools/repo-tools.js";
-import type { Toolbox } from "../tools/repo-tools.js";
+import { createRepoToolSpecs } from "../tools/repo-tools.js";
+import { createToolbox } from "../toolbox.js";
+import type { Toolbox } from "../toolbox.js";
 import { EXIT, HELP, flagOn, flagValue, flagsMissingValue, parseArgs, unknownFlags } from "./args.js";
 import type { ParsedArgs } from "./args.js";
 import { REDACTION_NOTICE, exitLine, progressLine, traceLines } from "./render.js";
@@ -266,9 +266,10 @@ async function commandRun(args: ParsedArgs, io: CliIo): Promise<number> {
 
   // 存储目录若落在仓库里面，它就不算材料——见 `storeInsideRepo`。
   const ownArtifacts = storeInsideRepo(options.repo, options.store);
-  const toolbox = createRepoTools({
+  const toolbox = createToolbox(createRepoToolSpecs(), {
     repoRoot: options.repo,
-    ignore: ownArtifacts === null ? [] : [ownArtifacts],
+    clock: () => Date.now(),
+    ignorePaths: ownArtifacts === null ? [] : [ownArtifacts],
   });
   const store = createSessionStore({ rootDir: options.store });
 
@@ -298,9 +299,10 @@ async function commandRun(args: ParsedArgs, io: CliIo): Promise<number> {
   };
 
   const started = await store.startRun(sessionId, taskObject);
-  const runner = createToolRunner({ tools: toolbox.port, clock: () => Date.now() });
   const runtime = createRuntime({
-    ...runner.toolDeps(),
+    tools: toolbox.port,
+    assembleObservation: toolbox.assembleObservation,
+    collectMissingMaterial: toolbox.collectMissingMaterial,
     log: started.log,
     ids: started.ids,
     model: built.built.model,
@@ -328,7 +330,7 @@ async function commandRun(args: ParsedArgs, io: CliIo): Promise<number> {
   // 消费者提前离场时流会短一截，而"花了多少"不该因此变成另一个数。
   const events = started.log.read(started.runId);
   const trace = traceOf(events);
-  const audit = auditRun(events, materialReader(toolbox));
+  const audit = auditRun(events, toolbox.materialReader);
   const code = exitCodeFor(trace);
 
   if (options.json) {

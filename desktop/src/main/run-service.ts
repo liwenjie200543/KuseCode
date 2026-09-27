@@ -3,11 +3,10 @@ import { stat } from "node:fs/promises";
 import {
   auditRun,
   catalogFromToolbox,
-  createRepoTools,
+  createRepoToolSpecs,
   createRuntime,
   createSessionStore,
-  createToolRunner,
-  materialReader,
+  createToolbox,
   offlineProvider,
   piModelAdapter,
   resolveProviderModel,
@@ -143,9 +142,10 @@ export class RunService {
       offline = false;
     }
 
-    const runner = createToolRunner({ tools: toolbox.port, clock: () => Date.now() });
     const runtime = createRuntime({
-      ...runner.toolDeps(),
+      tools: toolbox.port,
+      assembleObservation: toolbox.assembleObservation,
+      collectMissingMaterial: toolbox.collectMissingMaterial,
       log: started.log,
       ids: started.ids,
       model,
@@ -182,7 +182,7 @@ export class RunService {
     const events = jsonlRunLog({ rootDir: this.options.storeRoot }).read(runId);
     const repoRoot = this.repoRoots.get(runId) ?? this.options.defaultRepoRoot;
     const toolbox = this.toolboxFor(repoRoot);
-    return { trace: traceOf(events), audit: auditRun(events, materialReader(toolbox)) };
+    return { trace: traceOf(events), audit: auditRun(events, toolbox.materialReader) };
   }
 
   // -------------------------------------------------------------------------
@@ -194,7 +194,11 @@ export class RunService {
     const inside = this.options.storeRoot.startsWith(repoRoot)
       ? [this.options.storeRoot]
       : [];
-    const toolbox = createRepoTools({ repoRoot, ignore: inside });
+    const toolbox = createToolbox(createRepoToolSpecs(), {
+      repoRoot,
+      clock: () => Date.now(),
+      ignorePaths: inside,
+    });
     this.toolboxCache.set(repoRoot, toolbox);
     return toolbox;
   }
@@ -220,7 +224,7 @@ export class RunService {
       // trace 从日志读，不从事件流里攒（事件流可能被提前离场的消费者截短）。
       const events = ctx.readEvents();
       const trace = traceOf(events);
-      const audit = auditRun(events, materialReader(ctx.toolbox));
+      const audit = auditRun(events, ctx.toolbox.materialReader);
       const result: RunFinishedInfo = {
         runId,
         sessionId,

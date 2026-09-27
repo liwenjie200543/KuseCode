@@ -24,113 +24,25 @@
 
 import { readFile, readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { MaterialRef, ToolIntent, ToolOutcome, ToolPort } from "../core/types.js";
+import type { MaterialRef } from "../core/types.js";
+import { ToolArgumentError } from "../toolbox.js";
+import type { IgnoreRules, ToolSpec } from "../toolbox.js";
 
 // ---------------------------------------------------------------------------
-// 形状
+// 词汇的归属（SDD T11）
+// ---------------------------------------------------------------------------
+//
+// `JsonObjectSchema` / `ToolArgumentError` / `ToolSpec` / `ToolContext` /
+// `IgnoreRules` / `Toolbox` / 组装与 materialReader 已经升格到 `src/toolbox.ts`：
+// 它们是**任何**工具集都要用的组装词汇，不是"读仓库"这三个工具的私产。
+// 本文件从那以后只回答一个问题：**读仓库的三个工具各自长什么样**——
+// 加一个新工具的成本因此收敛为"写一个 spec + 在清单里加一行"。
+//
 // ---------------------------------------------------------------------------
 
-/** 一个工具参数的 JSON Schema 子集。够用就好，不是通用实现。 */
-export interface JsonObjectSchema {
-  readonly type: "object";
-  readonly properties: Readonly<Record<string, unknown>>;
-  readonly required: readonly string[];
-  readonly additionalProperties: false;
-}
-
-/** 参数不合法。`code` 直接用步 6 的词汇，Runtime 那一层不必再翻译。 */
-export class ToolArgumentError extends Error {
-  readonly code = "invalid_args";
-
-  constructor(message: string) {
-    super(message);
-    this.name = "ToolArgumentError";
-  }
-}
-
-/**
- * 一个抛出物 → 一条**可返回的**失败。
- *
- * `ToolArgumentError` 与别的错误的区分不是分类癖：它们对模型说的是不同的话。
- * `invalid_args` 的含义是"你给的东西没法用，换个参数再来"，而 `tool_failed` 的
- * 含义是"这次没拿到材料，换参数也一样"。把前者说成后者，模型会以为是自己运气
- * 不好而反复重试同一个越界路径；反过来把文件不存在说成 `invalid_args`，
- * 模型会去改一个本来就没错的参数。
- *
- * 判据放在**一处**：越界与非法正则都是 `ToolArgumentError`，但它们抛在 `run` 里
- * （路径围栏要用到 `repoRoot`），所以两个 catch 都必须走这里，不能各判一次。
- */
-function failureOf(error: unknown): { code: "invalid_args" | "tool_failed"; message: string } {
-  return {
-    code: error instanceof ToolArgumentError ? "invalid_args" : "tool_failed",
-    message: error instanceof Error ? error.message : String(error),
-  };
-}
-
-/** 工具自己知道自己能干什么。 */
-export interface ToolSpec {
-  readonly name: string;
-  readonly description: string;
-  readonly parameters: JsonObjectSchema;
-  /** 校验并收敛参数。不合法就抛 `ToolArgumentError`。 */
-  readonly parse: (args: Readonly<Record<string, unknown>>) => Record<string, unknown>;
-  /** 干活。参数已经过 `parse`。返回的必须是可 JSON 表示的值。 */
-  readonly run: (
-    args: Record<string, unknown>,
-    context: ToolContext,
-  ) => Promise<unknown>;
-  /**
-   * 这次结果让我们**看到了**哪些材料。
-   *
-   * 它在这里，而不是在一个"认识所有工具"的核对器里，理由与 schema 一样：
-   * 「`read_file` 的返回里哪两个字段是行号」这件事只有 `read_file` 知道。
-   * 步 9 的证据核对（`src/runtime/verify.ts`）靠它把"看到过什么"抽出来，
-   * 于是核对器不需要知道任何一个工具的名字。
-   *
-   * 省略它的工具 = 它的结果不构成可引用的材料（今天没有这样的工具，但形状上允许）。
-   */
-  readonly material?: (value: unknown) => readonly MaterialRef[];
-}
-
-/**
- * 工具干活时能看到的那一小片世界。
- *
- * `ignore` 不是常量，因为"哪些目录不是材料"有一半是**这次运行自己造成的**：
- * 默认的存储目录 `./runs` 落在被分析的仓库里面，而它装着这次 Run 自己的事件日志，
- * 日志里有任务文本，于是搜索会命中自己。那是自指的——Run 把它的输出当成了输入。
- * 这件事是实测撞出来的，见 `docs/09-cli-trace.md` 的「Run 不许读到自己的产物」。
- */
-export interface ToolContext {
-  readonly repoRoot: string;
-  readonly signal: AbortSignal;
-  readonly ignore: IgnoreRules;
-}
-
-/**
- * 「哪些目录不是材料」的两条规则。
- *
- * 它们必须分开，因为"跑到哪一层都该跳过"与"只有那一个位置该跳过"是两件事：
- *
- * - `names`：目录名，任意深度生效。`node_modules` 这种共识属于这里。
- * - `paths`：**仓库相对路径**，只在那一个位置生效。这次 Run 自己的产物属于这里。
- *
- * 为什么产物那条不能用名字：一个叫 `runs` 的素材目录会被静默漏掉，而"静默漏掉
- * 材料"正是这个项目最不愿发生的一件事——它看起来就像那个仓库里没有那些文件。
- */
-export interface IgnoreRules {
-  readonly names: ReadonlySet<string>;
-  readonly paths: ReadonlySet<string>;
-}
-
-/** 一个工具集：既能当 `ToolPort` 用，也能把自己的 schema 交出去。 */
-export interface Toolbox {
-  readonly names: readonly string[];
-  readonly specs: readonly ToolSpec[];
-  readonly port: ToolPort;
-}
-
 // ---------------------------------------------------------------------------
-// 参数校验的小工具
+// 参数与取值助手：所有 spec 共用的那一小套（`asRecord` 抛 ToolArgumentError，
+// `asValue`/`stringAt`/`numberAt` 只做"安全的读"，不抛）。
 // ---------------------------------------------------------------------------
 
 function asRecord(args: unknown, what: string): Record<string, unknown> {
@@ -173,33 +85,7 @@ function optionalInteger(
 }
 
 /** 声明的 schema 里出现了校验函数不认识的键——用一次测试钉住，不靠人眼。 */
-export function declaredKeysOf(spec: ToolSpec): readonly string[] {
-  return Object.keys(spec.parameters.properties);
-}
 
-// ---------------------------------------------------------------------------
-// 路径围栏：拦解析结果，不拦写法
-// ---------------------------------------------------------------------------
-
-/**
- * 把模型给的相对路径收敛成 repoRoot 之内的绝对路径。
- *
- * 判据是 `path.relative` 的结果：它不以 `..` 开头、也不是绝对路径，才说明目标
- * 真的在仓库里。这比检查字符串里有没有 `..` 严格——`a/../../x` 会被解析出来，
- * `..` 这个子串却可能出现在一个完全合法的文件名里。
- */
-export function resolveInsideRepo(repoRoot: string, requested: string): string {
-  const root = resolve(repoRoot);
-  const target = isAbsolute(requested) ? resolve(requested) : resolve(root, requested);
-  const rel = relative(root, target);
-  if (rel === "") return root;
-  if (rel.startsWith("..") || isAbsolute(rel)) {
-    throw new ToolArgumentError(`路径越出了仓库根目录：${requested}`);
-  }
-  return target;
-}
-
-/** 交给模型的路径一律是仓库相对路径，且用 `/` 分隔（跨平台一致）。 */
 function toRepoPath(repoRoot: string, absolute: string): string {
   const rel = relative(resolve(repoRoot), absolute);
   return rel.split(sep).join("/");
@@ -232,20 +118,6 @@ function numberAt(record: Record<string, unknown> | null, key: string): number |
 function joinRepoPath(base: string | null, name: string): string {
   if (base === null || base === "" || base === ".") return name;
   return `${base.replace(/\/$/, "")}/${name}`;
-}
-
-/** 用不着读的东西：它们不是"材料"，是噪声，而且体积可能极大。 */
-const IGNORED_DIRECTORY_NAMES = Object.freeze([
-  ".git",
-  "node_modules",
-  "dist",
-  "coverage",
-  ".workbuddy",
-]);
-
-/** 这个目录该不该跳过。两条规则见 `IgnoreRules`。 */
-function isIgnored(relativePath: string, name: string, ignore: IgnoreRules): boolean {
-  return ignore.names.has(name) || ignore.paths.has(relativePath);
 }
 
 // ---------------------------------------------------------------------------
@@ -319,6 +191,26 @@ const readFileSpec: ToolSpec = {
     return [{ path, lines }];
   },
 };
+
+/**
+ * 路径围栏：解析后的目标必须落在仓库根目录里。
+ * 拦住**解析结果**而不是写法——`a/../../etc/passwd` 与绝对路径是同一件事的不同写法。
+ */
+export function resolveInsideRepo(repoRoot: string, requested: string): string {
+  const root = resolve(repoRoot);
+  const target = isAbsolute(requested) ? resolve(requested) : resolve(root, requested);
+  const rel = relative(root, target);
+  if (rel === "") return root;
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    throw new ToolArgumentError(`路径越出了仓库根目录：${requested}`);
+  }
+  return target;
+}
+
+/** 这个目录该不该跳过。两条规则见 `IgnoreRules`（默认名单住在组装点）。 */
+function isIgnored(relativePath: string, name: string, ignore: IgnoreRules): boolean {
+  return ignore.names.has(name) || ignore.paths.has(relativePath);
+}
 
 // ---------------------------------------------------------------------------
 // list_dir
@@ -502,97 +394,18 @@ const searchTextSpec: ToolSpec = {
   },
 };
 
-/**
- * 把工具集变成一个「从观测里读出看到了什么」的读取器。
- *
- * 它按**工具名**分派到各自的 `material`：核对器（`src/runtime/verify.ts`）于是
- * 不需要认识任何工具。名字对不上（观测来自一个不在这个工具集里的工具）时返回
- * 空数组——那意味着"这次调用没有提供可引用的材料"，保守但诚实。
- */
-export function materialReader(box: Toolbox): (observation: {
-  readonly tool: string;
-  readonly value: unknown;
-}) => readonly MaterialRef[] {
-  const byName = new Map(box.specs.map((spec) => [spec.name, spec]));
-  return (observation) => {
-    const spec = byName.get(observation.tool);
-    if (spec?.material === undefined) return [];
-    return spec.material(observation.value);
-  };
-}
-
 // ---------------------------------------------------------------------------
-// 组装
+// 工具集清单
 // ---------------------------------------------------------------------------
 
 /**
- * 建一个真实工具集。
+ * 「读仓库」的三个工具，作为一份 spec 清单。
  *
- * 三个工具都在 `value` 里带自己的文件身份（`path` / 行号），所以模型引用证据时
- * 抄的是它**看到过**的东西，而不是自己编的路径。核对「模型抄错了没有」在
- * `src/runtime/verify.ts`（步 9），不在这里假装解决。
+ * 组装交给 `createToolbox`（`src/toolbox.ts`）：这里**只声明**有哪些工具，
+ * 不再负责端口、执行层包装与 materialReader——那三样是任何工具集共用的
+ * 组装事务。`ignorePaths`（比如这次 Run 自己的产物目录）也由组装方给出，
+ * 因为"产物在哪"是发起 Run 的那一层才知道的事（见 `docs/09` 的自指问题）。
  */
-export interface RepoToolsOptions {
-  readonly repoRoot: string;
-  /**
-   * 还要跳过哪些目录，写成**仓库相对路径**（`runs`、`out/runs`）。
-   *
-   * 由调用方给，因为"这次 Run 的产物在哪"只有发起它的那一层知道。
-   * 典型用法是 CLI：它同时知道 `--repo` 与 `--store`，于是能算出存储目录是不是
-   * 落在被分析的仓库里面——而那件事一旦成立，Run 就会读到自己的事件日志。
-   *
-   * 注意它的作用范围是**发现**（`list_dir` / `search_text`）：
-   * `read_file` 仍然能显式读到一个被跳过的路径。这是一条刻意的边界——
-   * 被跳过的目录只是"我们不推给模型"，不是"禁止访问"；而且拦在这里也只是把
-   * 同一条限制在另一个地方再写一遍，代价是 `read_file` 的行为开始取决于
-   * 一个与它无关的清单。
-   */
-  readonly ignore?: readonly string[];
-}
-
-export function createRepoTools(options: RepoToolsOptions): Toolbox {
-  const repoRoot = resolve(options.repoRoot);
-  const ignore: IgnoreRules = {
-    names: new Set(IGNORED_DIRECTORY_NAMES),
-    // 统一成 POSIX 分隔符：规则是给人写的（`out/runs`），不该因为平台而变。
-    paths: new Set((options.ignore ?? []).map((path) => path.replace(/\\/g, "/").replace(/\/+$/, ""))),
-  };
-  const specs: readonly ToolSpec[] = Object.freeze([readFileSpec, listDirSpec, searchTextSpec]);
-  const byName = new Map(specs.map((spec) => [spec.name, spec]));
-
-  const port: ToolPort = {
-    names: Object.freeze(specs.map((spec) => spec.name)),
-    async execute(intent: ToolIntent, signal: AbortSignal): Promise<ToolOutcome> {
-      const spec = byName.get(intent.name);
-      if (spec === undefined) {
-        // allowlist 的判断本来就在执行层，这里是它的第一次落地
-        return { value: null, error: { code: "invalid_tool", message: `未知工具：${intent.name}` } };
-      }
-      // 已经中止就不再动手：文件系统调用本身不可中断，所以闸门只能放在它前面。
-      // 这一条对两个驱动方都成立——我们的 Runtime（步 6 也有一道）与 SDK 的循环
-      // （`piToolDefinitions` 把它交给我们时的那个 signal）。
-      if (signal.aborted) {
-        return {
-          value: null,
-          error: { code: "tool_failed", message: "调用已被取消，工具没有执行" },
-        };
-      }
-      let args: Record<string, unknown>;
-      try {
-        args = spec.parse(intent.args);
-      } catch (error) {
-        return { value: null, error: failureOf(error) };
-      }
-      try {
-        const value = await spec.run(args, { repoRoot, signal, ignore });
-        return { value, error: null };
-      } catch (error) {
-        // 文件不存在、权限、编码——都是"这次没拿到材料"，不是 Run 的失败。
-        // 而越界、非法正则虽然抛在同一处，判据仍是 `invalid_args`（见 `failureOf`）。
-        return { value: null, error: failureOf(error) };
-      }
-    },
-  };
-
-  return { names: port.names, specs, port };
+export function createRepoToolSpecs(): readonly ToolSpec[] {
+  return Object.freeze([readFileSpec, listDirSpec, searchTextSpec]);
 }

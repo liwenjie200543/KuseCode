@@ -30,13 +30,13 @@ import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent
 import { Type } from "@earendil-works/pi-ai";
 import type { TSchema } from "@earendil-works/pi-ai";
 import type { ToolIntent, ToolOutcome, ToolPort } from "../../core/types.js";
-import type { Toolbox } from "../../tools/repo-tools.js";
+import type { Toolbox } from "../../toolbox.js";
 
 type PiToolDefinition = ToolDefinition<TSchema>;
 
 export interface PiToolBridgeOptions {
   /** 工具集：`specs` 提供 schema 与校验，`port` 提供执行。 */
-  readonly toolbox: Pick<Toolbox, "specs" | "port">;
+  readonly toolbox: Pick<Toolbox, "specs" | "rawPort">;
   /** 时钟，给 provenance 用。默认 `Date.now`。 */
   readonly clock?: () => number;
 }
@@ -76,7 +76,7 @@ export function piToolDefinitions(options: PiToolBridgeOptions): PiToolDefinitio
   const clock = options.clock ?? ((): number => Date.now());
 
   return options.toolbox.specs.map((spec) => {
-    const port: ToolPort = options.toolbox.port;
+    const port: ToolPort = options.toolbox.rawPort;
     return defineTool({
       name: spec.name,
       label: spec.name,

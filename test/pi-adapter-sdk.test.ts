@@ -35,7 +35,8 @@ import type { PiModelAdapterOptions } from "../src/adapter/pi/model.js";
 import { ASK_HUMAN_TOOL, SUBMIT_REPORT_TOOL } from "../src/adapter/pi/protocol.js";
 import { REDACTED, redactor } from "../src/core/redact.js";
 import type { AgentState } from "../src/core/types.js";
-import { createRepoTools } from "../src/tools/repo-tools.js";
+import { createRepoToolSpecs } from "../src/tools/repo-tools.js";
+import { createToolbox } from "../src/toolbox.js";
 
 // ---------------------------------------------------------------------------
 // 编译期证明：重试的所有权在 Runtime，调用方改不了
@@ -82,7 +83,7 @@ function harness(adapterOptions: Partial<PiModelAdapterOptions> = {}) {
   const models = createModels();
   models.setProvider(faux.provider);
 
-  const toolbox = createRepoTools({ repoRoot: process.cwd() });
+  const toolbox = createToolbox(createRepoToolSpecs(), { repoRoot: process.cwd(), clock: () => 0 });
   const catalog = catalogFromToolbox(toolbox);
 
   const seen: Seen = { context: null, options: undefined };

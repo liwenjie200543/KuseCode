@@ -14,7 +14,7 @@
  * 这个文件不认识 SDK：它产出的 schema 是纯 JSON Schema，转换由 `model.ts` 做。
  */
 
-import type { JsonObjectSchema, Toolbox } from "../../tools/repo-tools.js";
+import type { JsonObjectSchema, Toolbox } from "../../toolbox.js";
 import { TERMINAL_TOOLS, TERMINAL_TOOL_NAMES } from "./protocol.js";
 
 /** 一个工具的声明：名字、说明、JSON Schema。没有实现——实现属于各自那一侧。 */
