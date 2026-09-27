@@ -367,18 +367,20 @@ describe("trace 不接受矛盾的日志", () => {
 // ---------------------------------------------------------------------------
 
 describe("trace 与回放的分工", () => {
-  it("回放拒绝的日志（人的回答已经进来），trace 仍然说得清发生了什么", async () => {
+  it("恢复日志（SDD T8 后回放也认得）：trace 仍然独立说得清发生了什么", async () => {
     const { replayAgentState } = await import("../src/runtime/replay.js");
     const events: AgentEvent[] = [
       ev(0, "run_started", {}),
       ev(1, "decision_made", { decision: askHuman("要我读哪个目录？") }),
       ev(2, "human_input_requested", { question: "要我读哪个目录？" }),
-      // 回放对下面这两条抛错：怎么把人的回答写进 transcript 还没有定论。
+      // SDD T8 之后回放接受恢复事件了（T7 的 reduceHumanInput 闭合了那道缝）；
+      // 但 trace 的立场没变——它不重建状态，只读事实，两条路径各自独立成立。
       ev(3, "human_input_received", { input: "src/" }),
       ev(4, "run_resumed", {}),
     ];
 
-    expect(() => replayAgentState(events, task)).toThrow();
+    const state = replayAgentState(events, task);
+    expect(state.pendingQuestion).toBeNull();
     expect(() => traceOf(events)).not.toThrow();
 
     const trace = traceOf(events);

@@ -22,7 +22,7 @@
 | T5 | 投影接入适配器（行为等价） | 见 T5 commit | ✅（落点修正：PiModelAdapterOptions，非 RunAgentOptions） |
 | T6 | token 预算默认设防 | 见 T6 commit | ✅（spec 声明的唯一默认行为变化） |
 | T7 | `reduceHumanInput`（Core 恢复推进） | 见 T7 commit | ✅ |
-| T8 | 回放激活恢复事件 | — | ⬜ |
+| T8 | 回放激活恢复事件 | 见 T8 commit | ✅ |
 | T9 | `Runtime.resume` | — | ⬜ |
 | T10 | golden 挂起-恢复固定件 | — | ⬜ |
 | T11 | Toolbox 升格为通用组装点 | — | ⬜ |

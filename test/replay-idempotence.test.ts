@@ -357,30 +357,56 @@ describe("回放的输入必须是一条完整的日志", () => {
 // 四、重建不了的事件：响亮地拒绝，而不是猜
 // ---------------------------------------------------------------------------
 
-describe("回放拒绝它重建不了的事件", () => {
-  const hungRun = [
+describe("回放激活恢复事件（SDD T8：步 7 的拒绝由 T7 的 reduceHumanInput 闭合）", () => {
+  const hungPrefix = [
     ev(0, "run_started", {}),
     ev(1, "model_requested", { model: "fake-model" }),
     ev(2, "decision_made", { decision: askHuman("要我看哪个分支？") }),
     ev(3, "human_input_requested", { question: "要我看哪个分支？" }),
-    ev(4, "human_input_received", { input: "看 main" }),
   ];
 
-  it("human_input_received：把人的回答写进状态的那一步还不存在，所以拒绝而不是跳过", () => {
-    expect(() => replayAgentState(hungRun, task)).toThrow(/reduce 只接受决策/);
-    expect(() => replayAgentState(hungRun, task)).toThrow(/role: "human"/);
+  it("human_input_received：回答进 transcript（role: human），pendingQuestion 清空", () => {
+    const log = [...hungPrefix, ev(4, "human_input_received", { input: "看 main" })];
+    const state = replayAgentState(log, task);
+
+    expect(state.transcript.at(-1)).toEqual({ role: "human", answer: "看 main" });
+    expect(state.pendingQuestion).toBeNull();
+    expect(state.iteration).toBe(1); // 人的回答不消耗迭代预算（T7 语义）
   });
 
-  it("run_resumed 同样被拒绝", () => {
-    const log = [...hungRun.slice(0, 4), ev(4, "run_resumed", {})];
+  it("run_resumed 仅记录、不推进状态；runStatusOf 回到 running", () => {
+    const log = [
+      ...hungPrefix,
+      ev(4, "human_input_received", { input: "看 main" }),
+      ev(5, "run_resumed", {}),
+    ];
+    const state = replayAgentState(log, task);
 
-    expect(() => replayAgentState(log, task)).toThrow(/重建不了 run_resumed/);
+    // 状态与「只收到回答、还没收到 run_resumed」完全一致——它不推进任何一格。
+    expect(state).toEqual(replayAgentState([...hungPrefix, ev(4, "human_input_received", { input: "看 main" })], task));
+    expect(runStatusOf(log)).toBe("running");
+    expect(runStatusOf(hungPrefix)).toBe("awaiting_human");
   });
 
-  it("但「这个 Run 停在哪儿」答得出来：两个问题，两种严格程度", () => {
-    // 状态重建需要「人那一步怎么进 transcript」的语义；「停在哪儿」只需要看终态事件。
-    // 这个不对称是刻意的，两边都知道自己要什么。
-    expect(runStatusOf(hungRun)).toBe("awaiting_human");
+  it("没有待答问题时收到回答：日志自相矛盾，响亮拒绝而不是猜", () => {
+    const contradictory = [
+      ev(0, "run_started", {}),
+      ev(1, "human_input_received", { input: "凭空出现的回答" }),
+    ];
+
+    expect(() => replayAgentState(contradictory, task)).toThrow(/自己矛盾/);
+  });
+
+  it("终态之后再收到回答：同样拒绝（终态守卫纳入了本事件）", () => {
+    const afterTerminal = [
+      ev(0, "run_started", {}),
+      ev(1, "decision_made", { decision: askHuman("要我看哪个分支？") }),
+      ev(2, "human_input_requested", { question: "要我看哪个分支？" }),
+      ev(3, "run_cancelled", {}),
+      ev(4, "human_input_received", { input: "太迟了" }),
+    ];
+
+    expect(() => replayAgentState(afterTerminal, task)).toThrow(/run_cancelled 之后还在推进状态/);
   });
 });
 

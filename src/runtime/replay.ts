@@ -32,7 +32,7 @@
  * 「回放认不认识它」被迫当场回答。
  */
 
-import { reduce } from "../core/loop.js";
+import { reduce, reduceHumanInput } from "../core/loop.js";
 import type { AgentEvent, AgentState, Decision, RunStatus, Task } from "../core/types.js";
 import { emptyStateFor } from "./run-agent.js";
 
@@ -85,15 +85,6 @@ function unhandled(value: never): never {
   throw new Error(`回放没有处理这种事件：${JSON.stringify(value)}`);
 }
 
-function unsupported(eventType: AgentEvent["type"]): never {
-  throw new Error(
-    `回放重建不了 ${eventType}：把人的回答写进 transcript 的那一步还不存在——` +
-      `reduce 只接受决策，而 \`Message\` 里的 role: "human" 没有对应的状态推进。` +
-      `挂起与恢复的语义（谁交回答案、怎么重新进入循环）落地之前，回放对这类事件` +
-      `只能说「我不知道」，而不是猜一个少了人那一步的状态`,
-  );
-}
-
 // ---------------------------------------------------------------------------
 // 回放
 // ---------------------------------------------------------------------------
@@ -131,7 +122,9 @@ export function replayAgentState(events: readonly AgentEvent[], task: Task): Age
   for (const [index, event] of events.entries()) {
     if (
       terminal !== null &&
-      (event.type === "decision_made" || event.type === "observation_added")
+      (event.type === "decision_made" ||
+        event.type === "observation_added" ||
+        event.type === "human_input_received")
     ) {
       throw new Error(
         `日志在 ${terminal} 之后还在推进状态（${event.type}）：` +
@@ -140,11 +133,12 @@ export function replayAgentState(events: readonly AgentEvent[], task: Task): Age
     }
 
     switch (event.type) {
-      // 只有三种事件能改变状态：两条推进、一条结束。其余的都是「记录」，
+      // 只有四种事件能改变状态：三条推进、一条结束。其余的都是「记录」，
       // 不是「状态」——它们的存在理由分别是给人看（tool_started / tool_completed /
       // model_requested）、把已经发生的事说出来（human_input_requested，
       // 问题在 decision_made{ask_human} 那一步就已经进了 pendingQuestion）、
-      // 或者记账（usage_reported，它是账目不是状态；今天还没有生产者，步 8 才有）。
+      // 或者记账（usage_reported）。SDD T8 之后 run_resumed 也属于"记录"：
+      // 它宣告循环继续，推进由其后的 decision_made / observation_added 承担。
       case "decision_made": {
         const decision = event.decision;
         if (decision.kind === "call_tool") {
@@ -194,9 +188,27 @@ export function replayAgentState(events: readonly AgentEvent[], task: Task): Age
         break;
       }
 
-      case "human_input_received":
+      case "human_input_received": {
+        // SDD T8：步 7 时这里只能抛"重建不了"——把人的回答写进 transcript 的
+        // 那一步还不存在。T7 的 `reduceHumanInput` 落地后，恢复事件成为合法词汇。
+        // 两个不变量仍然要守：
+        // - **有问才有答**：状态必须停在挂起侧（pendingQuestion 非 null），
+        //   否则这份日志自己矛盾——"回答"凭空出现在没有提问的历史里；
+        // - **终态之后不推进**（上面那个 guard 已把本事件纳入）。
+        if (state.pendingQuestion === null) {
+          throw new Error(
+            `human_input_received 出现在没有待答问题的位置：` +
+              `回答只能回应一次已被记录的提问，这份日志自己矛盾`,
+          );
+        }
+        state = reduceHumanInput(state, event.input);
+        break;
+      }
+
       case "run_resumed":
-        unsupported(event.type);
+        // 仅记录，不推进状态：它宣告"循环继续了"，而"继续"由其后的
+        // decision_made / observation_added 逐条体现。
+        break;
 
       case "model_requested":
       case "tool_started":
