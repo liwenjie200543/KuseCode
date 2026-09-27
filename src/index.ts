@@ -86,6 +86,11 @@ export type {
   ProjectedTurn,
 } from "./core/project.js";
 
+// 配置（SDD T3）：驱动方的词汇，四层合并（flag > env > file > default）。
+// 纯函数模块——它自己不读盘；文件文本由调用方读进来。
+export { ConfigError, configFromEnv, defaultConfig, mergeConfig, parseConfigFile } from "./config/loader.js";
+export type { DeepPartial, KuseConfig } from "./config/schema.js";
+
 // 用量账目的算术。它在 Core 里，因为 `ModelUsage` 是 Core 的类型——
 // 而"`null` 不是加法单位元"这条规则只该有**一份**（步 8 在适配器与假模型里
 // 各写一次，于是账本永远是未知；见 `docs/08` 决定 6）。
