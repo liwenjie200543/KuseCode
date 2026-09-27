@@ -77,6 +77,15 @@ export type {
   TerminalDecision,
 } from "./core/loop.js";
 
+// 对话投影（SDD T4）：状态的请求级投影。纯函数、确定性；折叠产物刻意
+// 不是 Message——它没进过状态与事件日志，就不能冒充真相的形状。
+export { estimateTokens, projectConversation } from "./core/project.js";
+export type {
+  ProjectionPolicy,
+  ProjectedConversation,
+  ProjectedTurn,
+} from "./core/project.js";
+
 // 用量账目的算术。它在 Core 里，因为 `ModelUsage` 是 Core 的类型——
 // 而"`null` 不是加法单位元"这条规则只该有**一份**（步 8 在适配器与假模型里
 // 各写一次，于是账本永远是未知；见 `docs/08` 决定 6）。
