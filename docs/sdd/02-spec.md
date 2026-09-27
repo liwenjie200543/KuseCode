@@ -134,13 +134,16 @@
 
 ### FR-4 工具系统：单一注册点（→ G4）
 
-- **FR-4.1 Toolbox 组装**：提供 `Toolbox` 组装函数，输入 `ToolSpec[]`，一次产出
-  执行层所需的全部形状：带八道关卡的 `ToolPort`、组装接缝、material 读取器、
-  allowlist、provider 目录翻译所需的清单。
+- **FR-4.1 Toolbox 升格为通用组装点**：现有 `Toolbox`（`repo-tools.ts` 内，
+  形状 `{ names, specs, port }`）扩展为一次组装产出执行层所需的**全部**形状：
+  带八道关卡的 `ToolPort`、组装接缝（`assembleObservation`）、
+  `collectMissingMaterial`、`materialReader`、provider 目录翻译所需的
+  spec 清单。
 - **FR-4.2 新增工具的成本**：写一个 `ToolSpec`（name/description/schema/parse/
   run/material）+ 在组装处的注册列表加一行；**不需要**改 adapter、catalog、协议层。
 - **FR-4.3 边界不动**：Core 仍然只认识工具**名字**（allowlist）；schema 与
-  provider 形状翻译仍属工具侧与适配器；`adapter/pi` 仍是唯一 SDK 触点。
+  provider 形状翻译仍属工具侧与适配器；`adapter/pi` 仍是唯一 SDK 触点
+  （其对 tools 的既有 type-only 依赖保持）。
 
 验收判据：toolbox 单测；用"注册一个测试专用假工具"证明 FR-4.2 的成本声明。
 
@@ -247,7 +250,7 @@ Task + 配置
 **数据流 B：挂起-恢复（全新）**
 
 ```text
-run: … → ask_human → human_input_requested → awaiting_human（退出码 6）
+run: … → ask_human → human_input_requested → awaiting_human（退出码 13）
 answer: 校验（存在且挂起）→ 追加 human_input_received → run_resumed
         → 回放重建状态（清 pendingQuestion）→ 循环继续 → 新终态
 事后：同一份日志可完整回放/trace/审计（恢复不是旁路，是日志的一部分）
@@ -360,7 +363,7 @@ src/
 ├── adapter/pi/      # history.ts 改为消费投影；其余不变
 ├── store/           # 不变
 ├── tools/           # repo-tools 不变（ToolSpec 实现者）
-├── toolbox.ts       # ★ 组装点（FR-4）
+├── toolbox.ts       # ◇ 通用组装点（FR-4：既有 Toolbox 升格 + 执行层形状补齐）
 ├── config/          # ★ 配置解析（FR-5）
 ├── bootstrap/       # ★ 装配层（FR-3）
 ├── testing/         # 不变 + resume 假件扩展
