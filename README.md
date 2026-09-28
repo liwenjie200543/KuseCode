@@ -128,7 +128,7 @@ node examples/end-to-end.mjs
 |---|---|---|
 | 上下文工程 | `src/core/project.ts` | 请求级对话投影：长任务的请求体积有界且可预算，transcript 与事件日志永远完整 |
 | 人机回路 | `Runtime.resume` + `kuse answer` | 挂起的 Run 可以应答、恢复、继续循环——全程可回放可审计 |
-| 共享装配 | `src/bootstrap/` | CLI 与桌面壳只有一份接线（`createKuse`） |
+| 共享装配 | `src/bootstrap/` | 多产品面只有一份接线（后续由 Minimal Harness 重构收敛进 `src/agent/`） |
 | 工具注册 | `src/toolbox.ts` | 加一个工具 = 写一个 spec + 清单加一行 |
 | 配置 | `src/config/` | flag > env > `.kuse/config.json` > 默认，四层齐备 |
 
