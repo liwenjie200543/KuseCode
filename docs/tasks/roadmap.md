@@ -28,8 +28,11 @@
   grep/find/ls 手写（~150 行）。对比全手写（~700 行）省一半，且 SDK 工具自带
   截断/diff/二进制探测。spec 的"全部手写"按 goals §三"复用 SDK 优先"修正。
 
-## Phase 5 Permission
-- [ ] classifier + rules + manager + 单测（硬拒绝不被 auto 覆盖）
+## Phase 5 ✅ Permission
+- [x] classifier（bash 分段分档：safe/confirm/destructive）+ manager（决策顺序：
+  硬拒绝 → safe → remembered → auto → 询问回调 → 安全拒绝）+ 单测 9 例
+- [x] 接线：config.permissionMode（ask/auto）+ bootstrap beforeToolCall 钩子 +
+  setPermissionPrompt（TUI 对话框 Phase 11 注入；headless 默认拒绝）
 
 ## Phase 6 Context + Session
 - [ ] ContextManager（截断+压缩）+ SessionManager/Storage + 事件日志 + 单测

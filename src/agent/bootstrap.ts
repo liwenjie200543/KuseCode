@@ -14,6 +14,7 @@ import { createModelRegistry } from "../model/registry.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { createDefaultTools } from "../tools/index.js";
 import { NodeExecutionEnv } from "./env.js";
+import { PermissionManager } from "../permissions/manager.js";
 import { eventLogFor, type EventLog } from "../runtime/log.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { createKuseAgent } from "./agent.js";
@@ -30,6 +31,8 @@ export interface HarnessOptions {
 
 export interface Harness {
   readonly sessionId: string;
+  /** 产品面注入询问回调（TUI 对话框）；headless 保持 null（confirm 默认拒绝）。 */
+  setPermissionPrompt(prompt: ((request: { toolName: string; title: string; reason: string }) => Promise<"once" | "always" | "deny">) | null): void;
   readonly log: EventLog;
   /** 预留：各能力模块落地后由这里注入工具与钩子。 */
   run(text: string): Promise<string>;
@@ -51,6 +54,10 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
   const env = new NodeExecutionEnv(options.projectRoot);
   const toolRegistry = new ToolRegistry();
   for (const entry of createDefaultTools(env)) toolRegistry.register(entry);
+  const permissions = new PermissionManager({
+    mode: options.config.permissionMode,
+    riskFor: (name) => toolRegistry.get(name)?.risk,
+  });
   const registry = createModelRegistry();
   if (options.config.model === "mock" || options.config.model === null) {
     // 第一版：mock 是"没有凭据也能跑"的默认路径（真实 provider 解析在 Phase 12 CLI 完善）。
@@ -74,6 +81,10 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
     systemPrompt: buildSystemPrompt(options.projectRoot, toolRegistry.names()),
     tools: toolRegistry.list(),
     hooks: {
+      beforeToolCall: async (toolName, args) => {
+        const decision = await permissions.check(toolName, args as Record<string, unknown>);
+        return decision.action === "deny" ? decision.reason : null;
+      },
       onEvent: (event) => {
         recordEvent(append, event);
       },
@@ -82,6 +93,7 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
 
   return {
     sessionId,
+    setPermissionPrompt: (prompt) => permissions.setPrompt(prompt),
     log,
     run: async (text) => {
       append({ type: "run_started", goal: text });

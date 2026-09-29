@@ -10,8 +10,8 @@ import {
 import type { DeepPartial, KuseConfig } from "../src/config/schema.js";
 
 describe("defaultConfig", () => {
-  it("model 与 dataRoot 都缺省为 null", () => {
-    expect(defaultConfig()).toEqual({ model: null, dataRoot: null });
+  it("缺省：model/dataRoot 为 null，permissionMode 为 ask", () => {
+    expect(defaultConfig()).toEqual({ model: null, permissionMode: "ask", dataRoot: null });
   });
 
   it("观测/预算类的旧键不再属于配置词汇", () => {

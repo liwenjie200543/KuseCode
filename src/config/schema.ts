@@ -8,6 +8,8 @@
 export interface KuseConfig {
   /** `"provider/model"` 或 `"mock"`（离线剧本）。null = 取第一个已配置凭据的模型。 */
   readonly model: string | null;
+  /** `ask`（默认，confirm 操作询问）或 `auto`（测试/CI，全部放行）。 */
+  readonly permissionMode: "ask" | "auto";
   /** 事件日志与会话根目录。null = `<projectRoot>/.kusecode/runs`。 */
   readonly dataRoot: string | null;
 }
@@ -27,7 +29,7 @@ export class ConfigError extends Error {
 }
 
 export function defaultConfig(): KuseConfig {
-  return { model: null, dataRoot: null };
+  return { model: null, permissionMode: "ask", dataRoot: null };
 }
 
 export function configFromEnv(env: Readonly<Record<string, string | undefined>>): DeepPartial<KuseConfig> {
@@ -75,7 +77,7 @@ export function parseConfigFile(text: string): ParsedConfigFile {
 
   const warnings: string[] = [];
   const config: Record<string, unknown> = {};
-  const KNOWN = new Set(["model", "dataRoot"]);
+  const KNOWN = new Set(["model", "permissionMode", "dataRoot"]);
   const SECRET = /(secret|password|passwd|token|api[_-]?key|apikey)/i;
 
   for (const [key, value] of Object.entries(root)) {
@@ -86,7 +88,14 @@ export function parseConfigFile(text: string): ParsedConfigFile {
       warnings.push(`未知的配置键 ${key}（已忽略。拼写错误会让配置悄悄失效）`);
       continue;
     }
-    config[key] = key === "model" ? nullableString(value, "model") : nullableString(value, "dataRoot");
+    if (key === "permissionMode") {
+      if (value !== "ask" && value !== "auto") {
+        throw new ConfigError("permissionMode", `配置键 permissionMode 必须是 "ask" 或 "auto"，收到 ${describe(value)}`);
+      }
+      config[key] = value;
+    } else {
+      config[key] = key === "model" ? nullableString(value, "model") : nullableString(value, "dataRoot");
+    }
   }
   return { config: config as DeepPartial<KuseConfig>, warnings };
 }
@@ -96,12 +105,14 @@ export function mergeConfig(
   layers: readonly (DeepPartial<KuseConfig> | null | undefined)[],
 ): KuseConfig {
   let model = defaultConfig().model;
+  let permissionMode = defaultConfig().permissionMode;
   let dataRoot = defaultConfig().dataRoot;
   for (let index = layers.length - 1; index >= 0; index -= 1) {
     const layer = layers[index];
     if (layer === null || layer === undefined) continue;
     if (layer["model"] !== undefined) model = layer["model"];
+    if (layer["permissionMode"] !== undefined) permissionMode = layer["permissionMode"];
     if (layer["dataRoot"] !== undefined) dataRoot = layer["dataRoot"];
   }
-  return { model, dataRoot };
+  return { model, permissionMode, dataRoot };
 }
