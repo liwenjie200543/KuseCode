@@ -34,8 +34,13 @@
 - [x] 接线：config.permissionMode（ask/auto）+ bootstrap beforeToolCall 钩子 +
   setPermissionPrompt（TUI 对话框 Phase 11 注入；headless 默认拒绝）
 
-## Phase 6 Context + Session
-- [ ] ContextManager（截断+压缩）+ SessionManager/Storage + 事件日志 + 单测
+## Phase 6 ✅ Context + Session
+- [x] ContextManager：单结果截断（头尾保留+标记）+ 预算压缩（chars/4 估算复用 SDK
+  estimateTokens；切点在 user 消息边界、最近 N 轮逐字、摘要经注入的 summarizer）
+- [x] SessionManager/Storage：append-only JSONL（torn-write 安全）、create/resume/
+  continue（cwd 匹配）；标题从首条 user 消息派生（重写 header 会覆盖历史的教训）
+- [x] config.context 键 + bootstrap 接线（afterToolCall/transformContext/订阅落盘）
+- [x] 单测 8 例（截断/压缩/保护窗口/切点/预算内不压缩/resume/continue/torn write）
 
 ## Phase 7 Skills
 - [ ] loader + `load_skill` 工具 + 单测

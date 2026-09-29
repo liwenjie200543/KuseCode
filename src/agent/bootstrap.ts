@@ -15,6 +15,8 @@ import { ToolRegistry } from "../tools/registry.js";
 import { createDefaultTools } from "../tools/index.js";
 import { NodeExecutionEnv } from "./env.js";
 import { PermissionManager } from "../permissions/manager.js";
+import { ContextManager } from "../context/manager.js";
+import { SessionManager } from "../session/manager.js";
 import { eventLogFor, type EventLog } from "../runtime/log.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { createKuseAgent } from "./agent.js";
@@ -58,12 +60,36 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
     mode: options.config.permissionMode,
     riskFor: (name) => toolRegistry.get(name)?.risk,
   });
+  const session = new SessionManager(join(dataRoot, "sessions"));
   const registry = createModelRegistry();
   if (options.config.model === "mock" || options.config.model === null) {
     // 第一版：mock 是"没有凭据也能跑"的默认路径（真实 provider 解析在 Phase 12 CLI 完善）。
     if (options.config.model === "mock") registry.enableMock();
   }
   const resolved = await registry.resolve(options.config.model === "mock" ? null : options.config.model);
+
+  const context = new ContextManager({
+    ...(options.config.context?.maxToolResultChars === undefined ? {} : { maxToolResultChars: options.config.context.maxToolResultChars }),
+    ...(options.config.context?.compactAboveTokens === undefined ? {} : { compactAboveTokens: options.config.context.compactAboveTokens }),
+    ...(options.config.context?.keepRecentMessages === undefined ? {} : { keepRecentMessages: options.config.context.keepRecentMessages }),
+    summarize: async (transcript, signal?: AbortSignal) => {
+      const completeOptions = signal === undefined ? undefined : { signal };
+      const message = await registry.models.completeSimple(
+        resolved.model,
+        {
+          systemPrompt: "把这段编码会话压缩成一份交接摘要：目标、试过什么、改了哪些文件（带路径）、当前状态、下一步。保留代码标识符原文，不要客套。",
+          messages: [{ role: "user", content: transcript, timestamp: Date.now() }],
+        },
+        completeOptions,
+      );
+      const text = message.content
+        .map((part: { type: string; text?: string }) => (part.type === "text" ? (part.text ?? "") : ""))
+        .filter(Boolean)
+        .join("\n")
+        .trim();
+      return text.length > 0 ? text : "(空摘要)";
+    },
+  });
 
   /** 在途的日志写入。run() 返回前必须清空——调用方读到的日志要完整。 */
   const pending: Promise<unknown>[] = [];
@@ -85,8 +111,11 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
         const decision = await permissions.check(toolName, args as Record<string, unknown>);
         return decision.action === "deny" ? decision.reason : null;
       },
+      afterToolCall: async (hookContext) => context.handleAfterToolCall(hookContext),
+      transformContext: context.makeTransformContext(),
       onEvent: (event) => {
         recordEvent(append, event);
+        if (event.type === "message_end") void session.record(event.message);
       },
     },
   });

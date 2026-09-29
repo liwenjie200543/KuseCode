@@ -10,6 +10,12 @@ export interface KuseConfig {
   readonly model: string | null;
   /** `ask`（默认，confirm 操作询问）或 `auto`（测试/CI，全部放行）。 */
   readonly permissionMode: "ask" | "auto";
+  /** 上下文策略（全部可选，缺省见 ContextManager）。 */
+  readonly context?: {
+    readonly maxToolResultChars?: number;
+    readonly compactAboveTokens?: number;
+    readonly keepRecentMessages?: number;
+  };
   /** 事件日志与会话根目录。null = `<projectRoot>/.kusecode/runs`。 */
   readonly dataRoot: string | null;
 }
@@ -77,7 +83,7 @@ export function parseConfigFile(text: string): ParsedConfigFile {
 
   const warnings: string[] = [];
   const config: Record<string, unknown> = {};
-  const KNOWN = new Set(["model", "permissionMode", "dataRoot"]);
+  const KNOWN = new Set(["model", "permissionMode", "context", "dataRoot"]);
   const SECRET = /(secret|password|passwd|token|api[_-]?key|apikey)/i;
 
   for (const [key, value] of Object.entries(root)) {
@@ -88,7 +94,19 @@ export function parseConfigFile(text: string): ParsedConfigFile {
       warnings.push(`未知的配置键 ${key}（已忽略。拼写错误会让配置悄悄失效）`);
       continue;
     }
-    if (key === "permissionMode") {
+    if (key === "context") {
+      if (!isPlainObject(value)) {
+        throw new ConfigError("context", `配置键 context 必须是对象，收到 ${describe(value)}`);
+      }
+      const ctx: Record<string, unknown> = {};
+      for (const [inner, innerValue] of Object.entries(value)) {
+        if (typeof innerValue !== "number" || !Number.isInteger(innerValue) || innerValue <= 0) {
+          throw new ConfigError(`context.${inner}`, `配置键 context.${inner} 必须是正整数，收到 ${describe(innerValue)}`);
+        }
+        ctx[inner] = innerValue;
+      }
+      config["context"] = ctx;
+    } else if (key === "permissionMode") {
       if (value !== "ask" && value !== "auto") {
         throw new ConfigError("permissionMode", `配置键 permissionMode 必须是 "ask" 或 "auto"，收到 ${describe(value)}`);
       }
@@ -106,13 +124,15 @@ export function mergeConfig(
 ): KuseConfig {
   let model = defaultConfig().model;
   let permissionMode = defaultConfig().permissionMode;
+  let context = defaultConfig().context;
   let dataRoot = defaultConfig().dataRoot;
   for (let index = layers.length - 1; index >= 0; index -= 1) {
     const layer = layers[index];
     if (layer === null || layer === undefined) continue;
     if (layer["model"] !== undefined) model = layer["model"];
     if (layer["permissionMode"] !== undefined) permissionMode = layer["permissionMode"];
+    if (layer["context"] !== undefined) context = { ...(context ?? {}), ...layer["context"] };
     if (layer["dataRoot"] !== undefined) dataRoot = layer["dataRoot"];
   }
-  return { model, permissionMode, dataRoot };
+  return { model, permissionMode, ...(context === undefined ? {} : { context }), dataRoot };
 }

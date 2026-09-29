@@ -16,13 +16,23 @@
  * 我们的全部职责：把钩子接到对应模块，把事件转成日志记录并转发给调用方。
  */
 
-import { Agent, type AgentEvent } from "@earendil-works/pi-agent-core";
+import {
+  Agent,
+  type AfterToolCallContext,
+  type AfterToolCallResult,
+  type AgentEvent,
+  type AgentMessage,
+} from "@earendil-works/pi-agent-core";
 import type { Model, Models } from "@earendil-works/pi-ai";
 
 /** 钩子的可选策略。全部缺省 = 直接放行 / 不处理（最小可用的 Agent）。 */
 export interface AgentHooks {
   /** 权限闸门：返回非 null 字符串即拒绝，模型看得见拒绝理由。 */
   beforeToolCall?: (toolName: string, args: unknown) => Promise<string | null>;
+  /** 结果卫生（截断）：返回 undefined 表示不处理。 */
+  afterToolCall?: (context: AfterToolCallContext) => Promise<AfterToolCallResult | undefined>;
+  /** 请求前上下文改写（压缩）。 */
+  transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
   /** 事件观察者（会话落盘、日志、UI 都从这里走）。 */
   onEvent?: (event: AgentEvent) => void | Promise<void>;
 }
@@ -68,6 +78,8 @@ export function createKuseAgent(options: KuseAgentOptions): KuseAgent {
   };
 
   const beforeToolCall = hooks?.beforeToolCall;
+  const afterToolCall = hooks?.afterToolCall;
+  const transformContext = hooks?.transformContext;
   const agent = new Agent({
     streamFn: options.models.streamSimple.bind(options.models),
     initialState: {
@@ -84,6 +96,8 @@ export function createKuseAgent(options: KuseAgentOptions): KuseAgent {
             return reason === null ? undefined : { block: true, reason };
           },
         }),
+    ...(afterToolCall === undefined ? {} : { afterToolCall }),
+    ...(transformContext === undefined ? {} : { transformContext }),
   });
 
   agent.subscribe(push);
