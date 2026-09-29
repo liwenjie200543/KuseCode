@@ -42,8 +42,11 @@
 - [x] config.context 键 + bootstrap 接线（afterToolCall/transformContext/订阅落盘）
 - [x] 单测 8 例（截断/压缩/保护窗口/切点/预算内不压缩/resume/continue/torn write）
 
-## Phase 7 Skills
-- [ ] loader + `load_skill` 工具 + 单测
+## Phase 7 ✅ Skills
+- [x] skills/loader.ts：discover 用 SDK `loadSkills`（直接吃 NodeExecutionEnv——零自研
+  解析）+ skillsPromptSection（清单只有 name:description）+ `load_skill` 工具
+- [x] bootstrap 接线：发现项目级+用户级技能 → 提示词段 + 注册 safe 工具
+- [x] 单测 3 例 + CLI 冒烟（技能清单进系统提示词，token 计入）
 
 ## Phase 8 MCP
 - [ ] mcp/index + fixture server + 单测

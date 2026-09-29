@@ -1,9 +1,8 @@
 /**
- * bootstrap —— 从配置组装出一套可运行的 Agent（模型 + 工具 + 钩子 + 事件日志）。
+ * bootstrap —— 从配置组装出一套可运行的 Agent（模型 + 工具 + 钩子 + 事件日志 + 会话）。
  *
  * 这是产品面（CLI/TUI）唯一的接线点：接线只有一份，Agent 逻辑只有一份。
- * 各能力模块（tools/permissions/context/session/skills/mcp）在后续 Phase 落地时
- * 从这里接入。
+ * 能力模块（tools/permissions/context/session/skills）在这里接入对应钩子。
  */
 
 import { mkdir } from "node:fs/promises";
@@ -17,6 +16,7 @@ import { NodeExecutionEnv } from "./env.js";
 import { PermissionManager } from "../permissions/manager.js";
 import { ContextManager } from "../context/manager.js";
 import { SessionManager } from "../session/manager.js";
+import { createLoadSkillTool, discoverSkills, skillsPromptSection } from "../skills/loader.js";
 import { eventLogFor, type EventLog } from "../runtime/log.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { createKuseAgent } from "./agent.js";
@@ -33,10 +33,14 @@ export interface HarnessOptions {
 
 export interface Harness {
   readonly sessionId: string;
-  /** 产品面注入询问回调（TUI 对话框）；headless 保持 null（confirm 默认拒绝）。 */
-  setPermissionPrompt(prompt: ((request: { toolName: string; title: string; reason: string }) => Promise<"once" | "always" | "deny">) | null): void;
   readonly log: EventLog;
-  /** 预留：各能力模块落地后由这里注入工具与钩子。 */
+  /** 产品面注入询问回调（TUI 对话框）；headless 保持 null（confirm 默认拒绝）。 */
+  setPermissionPrompt(
+    prompt:
+      | ((request: { toolName: string; title: string; reason: string }) => Promise<"once" | "always" | "deny">)
+      | null,
+  ): void;
+  /** 一次性任务：返回最终 assistant 文本；返回前日志已全部落盘。 */
   run(text: string): Promise<string>;
   abort(): void;
   waitForIdle(): Promise<void>;
@@ -54,30 +58,43 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
   const sessionId = randomUUID();
   const log = eventLogFor(dataRoot, sessionId);
   const env = new NodeExecutionEnv(options.projectRoot);
+
+  // 工具集：SDK 内建 4 件 + 搜索三件套 + load_skill。
   const toolRegistry = new ToolRegistry();
   for (const entry of createDefaultTools(env)) toolRegistry.register(entry);
+  const skills = await discoverSkills(env, options.projectRoot);
+  toolRegistry.register({ tool: createLoadSkillTool(skills), risk: "safe" });
+
+  // 权限：risk 声明来自注册表，模式来自配置。
   const permissions = new PermissionManager({
     mode: options.config.permissionMode,
     riskFor: (name) => toolRegistry.get(name)?.risk,
   });
-  const session = new SessionManager(join(dataRoot, "sessions"));
+
+  // 模型：mock 是无凭据时的确定性离线路径。
   const registry = createModelRegistry();
-  if (options.config.model === "mock" || options.config.model === null) {
-    // 第一版：mock 是"没有凭据也能跑"的默认路径（真实 provider 解析在 Phase 12 CLI 完善）。
-    if (options.config.model === "mock") registry.enableMock();
-  }
+  if (options.config.model === "mock") registry.enableMock();
   const resolved = await registry.resolve(options.config.model === "mock" ? null : options.config.model);
 
+  // 上下文：截断 + 压缩（摘要走当前模型）。
+  const contextOptions = options.config.context ?? {};
   const context = new ContextManager({
-    ...(options.config.context?.maxToolResultChars === undefined ? {} : { maxToolResultChars: options.config.context.maxToolResultChars }),
-    ...(options.config.context?.compactAboveTokens === undefined ? {} : { compactAboveTokens: options.config.context.compactAboveTokens }),
-    ...(options.config.context?.keepRecentMessages === undefined ? {} : { keepRecentMessages: options.config.context.keepRecentMessages }),
-    summarize: async (transcript, signal?: AbortSignal) => {
+    ...(contextOptions.maxToolResultChars === undefined
+      ? {}
+      : { maxToolResultChars: contextOptions.maxToolResultChars }),
+    ...(contextOptions.compactAboveTokens === undefined
+      ? {}
+      : { compactAboveTokens: contextOptions.compactAboveTokens }),
+    ...(contextOptions.keepRecentMessages === undefined
+      ? {}
+      : { keepRecentMessages: contextOptions.keepRecentMessages }),
+    summarize: async (transcript, signal) => {
       const completeOptions = signal === undefined ? undefined : { signal };
       const message = await registry.models.completeSimple(
         resolved.model,
         {
-          systemPrompt: "把这段编码会话压缩成一份交接摘要：目标、试过什么、改了哪些文件（带路径）、当前状态、下一步。保留代码标识符原文，不要客套。",
+          systemPrompt:
+            "把这段编码会话压缩成一份交接摘要：目标、试过什么、改了哪些文件（带路径）、当前状态、下一步。保留代码标识符原文，不要客套。",
           messages: [{ role: "user", content: transcript, timestamp: Date.now() }],
         },
         completeOptions,
@@ -91,12 +108,15 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
     },
   });
 
-  /** 在途的日志写入。run() 返回前必须清空——调用方读到的日志要完整。 */
+  // 会话：message_end 的终态消息落盘。
+  const session = new SessionManager(join(dataRoot, "sessions"));
+
+  /** 在途日志写入。run() 返回前必须清空——调用方读到的日志才完整。 */
   const pending: Promise<unknown>[] = [];
   const append = (event: { type: string } & Record<string, unknown>): void => {
     pending.push(
       log.append(event).catch(() => {
-        // 日志写不进去不该让 Agent 崩溃——但这是一个可见的损失，留给 trace 的缺失说明。
+        // 日志写不进去不该让 Agent 崩溃——但这是可见的损失，留给 trace 的缺失说明。
       }),
     );
   };
@@ -104,7 +124,12 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
   const agent = createKuseAgent({
     models: registry.models,
     model: resolved.model,
-    systemPrompt: buildSystemPrompt(options.projectRoot, toolRegistry.names()),
+    systemPrompt: [
+      buildSystemPrompt(options.projectRoot, toolRegistry.names()),
+      skillsPromptSection(skills),
+    ]
+      .filter((part) => part.length > 0)
+      .join("\n\n"),
     tools: toolRegistry.list(),
     hooks: {
       beforeToolCall: async (toolName, args) => {
@@ -122,22 +147,18 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
 
   return {
     sessionId,
-    setPermissionPrompt: (prompt) => permissions.setPrompt(prompt),
     log,
+    setPermissionPrompt: (prompt) => permissions.setPrompt(prompt),
     run: async (text) => {
       append({ type: "run_started", goal: text });
       try {
         await agent.prompt(text);
       } catch (error) {
-        append({
-          type: "error",
-          message: error instanceof Error ? error.message : String(error),
-        });
+        append({ type: "error", message: error instanceof Error ? error.message : String(error) });
         await Promise.all(pending);
         throw error;
       }
-      // 事件日志的写入全部落定后 run 才返回：调用方（CLI/TUI）此刻读日志，
-      // 读到的一定是完整真相——包括"为什么停"与最后一条消息。
+      // 日志全部落定后 run 才返回：调用方此刻读日志，读到的一定是完整真相。
       await Promise.all(pending);
       return lastAssistantText(agent.messages());
     },
@@ -146,7 +167,7 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
   };
 }
 
-/** SDK 事件 → 日志事件（5 种词汇之一；原始事件整体保留在 details 里）。 */
+/** SDK 事件 → 日志事件（5 种词汇；token 增量等非审计事件不落日志）。 */
 function recordEvent(
   append: (event: { type: string } & Record<string, unknown>) => void,
   event: AgentEvent,
@@ -156,10 +177,7 @@ function recordEvent(
       const message = event.message;
       if (message.role === "assistant" && message.stopReason === "error") {
         // 模型错误必须可见（trace 的"为什么停"），不能安静地只留一条空消息。
-        append({
-          type: "error",
-          message: message.errorMessage ?? "provider error",
-        });
+        append({ type: "error", message: message.errorMessage ?? "provider error" });
       }
       append({
         type: "message_end",
@@ -182,17 +200,12 @@ function recordEvent(
       append({ type: "tool_call", tool: event.toolName, args: event.args });
       return;
     case "tool_execution_end":
-      append({
-        type: "tool_result",
-        tool: event.toolName,
-        isError: event.result?.isError ?? false,
-      });
+      append({ type: "tool_result", tool: event.toolName, isError: event.result?.isError ?? false });
       return;
     case "agent_end":
       append({ type: "agent_end" });
       return;
     default:
-      // 其余事件（流式增量等）不落日志：token 增量不是审计证据。
       return;
   }
 }
@@ -205,7 +218,11 @@ function lastAssistantText(messages: unknown[]): string {
     if (typeof message.content === "string") return message.content;
     if (Array.isArray(message.content)) {
       const text = message.content
-        .map((part) => (typeof part === "object" && part !== null && "text" in part ? String((part as { text: unknown }).text) : ""))
+        .map((part) =>
+          typeof part === "object" && part !== null && "text" in part
+            ? String((part as { text: unknown }).text)
+            : "",
+        )
         .join("");
       if (text.length > 0) return text;
     }
@@ -219,7 +236,11 @@ function textOf(message: { readonly role: string; readonly content?: unknown }):
   if (typeof content === "string") return content.slice(0, 500);
   if (Array.isArray(content)) {
     return content
-      .map((part) => (typeof part === "object" && part !== null && "text" in part ? String((part as { text: unknown }).text) : ""))
+      .map((part) =>
+        typeof part === "object" && part !== null && "text" in part
+          ? String((part as { text: unknown }).text)
+          : "",
+      )
       .join("")
       .slice(0, 500);
   }
