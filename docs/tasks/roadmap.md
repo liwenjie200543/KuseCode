@@ -54,8 +54,11 @@
   干净关闭；单点故障只记录不致命
 - [x] fixture：真 stdio echo server + 单测 3 例（连接调用/单点故障/命名规则）
 
-## Phase 9 Sub-Agent
-- [ ] agents/manager + 4 工具 + 上限/只读单测
+## Phase 9 ✅ Sub-Agent
+- [x] agents/manager.ts：worker 复用同一个 Agent 类 + 只读工具子集 + 独立
+  transcript/abort；spawn 返回快照（内部状态可变、对调用方只读）
+- [x] spawn_agent/list_agents/wait_agent/close_agent 四工具 + 并发上限 3 +
+  重名/未知名拒绝 + 单测 4 例
 
 ## Phase 10 Reliable Runtime（收敛）
 - [ ] replay/recovery/trace 最终形态确定；删除该 Phase 发现的多余抽象
