@@ -60,9 +60,12 @@
 - [x] spawn_agent/list_agents/wait_agent/close_agent 四工具 + 并发上限 3 +
   重名/未知名拒绝 + 单测 4 例
 
-## Phase 10 Reliable Runtime（收敛）
-- [ ] replay/recovery/trace 最终形态确定；删除该 Phase 发现的多余抽象
-- [ ] 验收：崩溃安全（torn line）+ unfinished 恢复路径有测试
+## Phase 10 ✅ Reliable Runtime（收敛）
+- [x] 最终形态：runtime/log.ts（事件日志）+ runtime/trace.ts（三问投影）+
+  runtime/recovery.ts（unfinished 检测，cwd 匹配）+ session/resume（replay）
+  ——四个能力合计 ~230 行，无多余抽象
+- [x] 单测 3 例（finished/unfinished 判定、cwd 匹配、continue 后 finished）
+- 实施决定：replay 直接由会话 JSONL 承担（resume 只读加载），不另设 replay 模块
 
 ## Phase 11 TUI
 - [ ] tui/ 组合 + 斜杠命令 + pty 冒烟
