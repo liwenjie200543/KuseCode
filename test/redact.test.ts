@@ -13,7 +13,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { REDACTED, redactText, redactValue, redactor, secretsFromEnv } from "../src/core/redact.js";
+import { REDACTED, redactText, redactValue, redactor, secretsFromEnv } from "../src/tools/redact.js";
 
 describe("secretsFromEnv：哪些环境变量算凭据", () => {
   it("按**词**认名字，不认子串", () => {

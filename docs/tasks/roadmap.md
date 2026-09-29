@@ -11,13 +11,15 @@
 - [ ] 删除 `desktop/`、根 README/CI 中的 desktop 引用
 - [ ] 全量测试绿 → commit → push
 
-## Phase 3 Simplify Agent Core
-- [ ] 依赖：+ `@earendil-works/pi-agent-core`、`pi-tui`（TUI 用，提前一并加）
-- [ ] 新建 `src/agent/`（Agent + 钩子 + bootstrap）；删除 `src/core/`、`src/adapter/`、
-  `src/runtime/` 旧形态、`src/store/`、`src/testing/`、`toolbox.ts`、旧 `test/`
-- [ ] 保留：`core/redact.ts` → `tools/redact.ts`；`config/` 修剪
-- [ ] 新增最小单测（agent 冒烟：mock provider 走通 loop + 工具）
-- [ ] 验收：typecheck/test/build 绿；src 行数显著下降并记录
+## Phase 3 ✅ Simplify Agent Core
+- [x] 依赖：+ `@earendil-works/pi-agent-core`、`pi-tui`、`@earendil-works/pi-ai` 升至 0.84.3；- pi-coding-agent
+- [x] 新建 `src/agent/`（agent.ts + prompt.ts + bootstrap.ts）；删除 `src/core/`、`src/adapter/`、
+  旧 `src/runtime/`、`src/store/`、`src/testing/`、`toolbox.ts`、旧 `test/`（8,924 → 数百行）
+- [x] 保留：`core/redact.ts` → `tools/redact.ts`；`config/` 修剪为 model/dataRoot
+- [x] 新增单测：agent.test.ts（文本/工具/权限拒绝三路径）+ runtime-log.test.ts（seq 连续/torn write）
+- [x] 验收：typecheck/test/build 全绿（34 例）；CLI 离线冒烟通过（mock 回声 + token 账目 +
+  事件日志 seq 连续）；src 行数 9,633 → **1,878**
+- 修正：run() 返回前 await 全部在途日志写入（调用方读到的日志完整）；mock 注册默认回声剧本
 
 ## Phase 4 Coding Tools
 - [ ] `tools/`：registry + paths + diff + 7 工具 + 单测（每工具 ≥2 例）

@@ -1,38 +1,107 @@
 /**
- * KuseCode 配置的**词汇**（SDD T3，docs/sdd/03-architecture.md §3.4）。
+ * KuseCode 配置的词汇与解析（四层：flag > env > 文件 > 默认）。
  *
- * 这个文件只声明形状与默认值，不做解析——解析在 `loader.ts`。
- * 两条规矩：
- *
- * 1. **配置是驱动方的关注点**（与预算同理），它永远到不了 Core：
- *    Core 的投影函数只认 `ProjectionPolicy` 参数，不认 `KuseConfig`。
- * 2. **观测截断 8000 不在配置里**，这是刻意的：`docs/06` 的既有决定——
- *    没有证据表明它需要按调用方变化，而多一个旋钮就多一种
- *    「同一个任务在不同配置下产出了不同的证据」的可能。
+ * 手写守卫，零依赖。未知键警告不失败（配置文件是要提交进仓库的），
+ * 类型错启动即失败并指出键名。
  */
 
-import type { ProjectionPolicy } from "../core/project.js";
-import type { RunBudget } from "../core/types.js";
-
-/** 驱动方交给装配层的全部配置。**全量、已校验**——字段不允许缺省。 */
 export interface KuseConfig {
-  /**
-   * 模型：`"provider/model"`，或 `"faux"`（离线剧本）。
-   * `null` = 未指定，由装配层按环境解析（解析失败是装配层的事）。
-   */
+  /** `"provider/model"` 或 `"mock"`（离线剧本）。null = 取第一个已配置凭据的模型。 */
   readonly model: string | null;
-  /** 一次 Run 的预算。语义与执法见 `src/runtime/budget.ts`，这里只承载默认。 */
-  readonly budget: RunBudget;
-  /** 请求级对话投影的策略参数（Core 词汇，见 `src/core/project.ts`）。 */
-  readonly projection: ProjectionPolicy;
-  /**
-   * runs/sessions 数据根。`null` = 默认 `<repoRoot>/runs`。
-   * 显式给出时通常是为了把产物挪出被分析的仓库（自指问题，见 `docs/09`）。
-   */
+  /** 事件日志与会话根目录。null = `<projectRoot>/.kusecode/runs`。 */
   readonly dataRoot: string | null;
 }
 
-/** 配置文件的局部形状：逐键可选；对象逐字段合并（见 `mergeConfig`）。 */
 export type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K];
 };
+
+export class ConfigError extends Error {
+  readonly key: string | null;
+
+  constructor(key: string | null, message: string) {
+    super(message);
+    this.name = "ConfigError";
+    this.key = key;
+  }
+}
+
+export function defaultConfig(): KuseConfig {
+  return { model: null, dataRoot: null };
+}
+
+export function configFromEnv(env: Readonly<Record<string, string | undefined>>): DeepPartial<KuseConfig> {
+  const model = env["KUSECODE_MODEL"]?.trim();
+  return model ? { model } : {};
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nullableString(value: unknown, key: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new ConfigError(key, `配置键 ${key} 必须是非空字符串或 null，收到 ${describe(value)}`);
+  }
+  return value;
+}
+
+function describe(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "数组";
+  return typeof value;
+}
+
+export interface ParsedConfigFile {
+  readonly config: DeepPartial<KuseConfig>;
+  readonly warnings: readonly string[];
+}
+
+/** 配置文件文本 → 部分配置 + 警告。JSON 坏 / 顶层非对象 → ConfigError。 */
+export function parseConfigFile(text: string): ParsedConfigFile {
+  let root: unknown;
+  try {
+    root = JSON.parse(text);
+  } catch (error) {
+    throw new ConfigError(
+      null,
+      `配置文件不是合法 JSON：${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!isPlainObject(root)) {
+    throw new ConfigError(null, `配置文件顶层必须是对象，收到 ${describe(root)}`);
+  }
+
+  const warnings: string[] = [];
+  const config: Record<string, unknown> = {};
+  const KNOWN = new Set(["model", "dataRoot"]);
+  const SECRET = /(secret|password|passwd|token|api[_-]?key|apikey)/i;
+
+  for (const [key, value] of Object.entries(root)) {
+    if (SECRET.test(key)) {
+      warnings.push(`配置键 ${key} 长得像凭据——秘密只该住在环境变量里`);
+    }
+    if (!KNOWN.has(key)) {
+      warnings.push(`未知的配置键 ${key}（已忽略。拼写错误会让配置悄悄失效）`);
+      continue;
+    }
+    config[key] = key === "model" ? nullableString(value, "model") : nullableString(value, "dataRoot");
+  }
+  return { config: config as DeepPartial<KuseConfig>, warnings };
+}
+
+/** `layers` 按优先级从高到低；前面的键赢。null/undefined 层跳过。 */
+export function mergeConfig(
+  layers: readonly (DeepPartial<KuseConfig> | null | undefined)[],
+): KuseConfig {
+  let model = defaultConfig().model;
+  let dataRoot = defaultConfig().dataRoot;
+  for (let index = layers.length - 1; index >= 0; index -= 1) {
+    const layer = layers[index];
+    if (layer === null || layer === undefined) continue;
+    if (layer["model"] !== undefined) model = layer["model"];
+    if (layer["dataRoot"] !== undefined) dataRoot = layer["dataRoot"];
+  }
+  return { model, dataRoot };
+}
