@@ -21,8 +21,12 @@
   事件日志 seq 连续）；src 行数 9,633 → **1,878**
 - 修正：run() 返回前 await 全部在途日志写入（调用方读到的日志完整）；mock 注册默认回声剧本
 
-## Phase 4 Coding Tools
-- [ ] `tools/`：registry + paths + diff + 7 工具 + 单测（每工具 ≥2 例）
+## Phase 4 ✅ Coding Tools
+- [x] `tools/`：registry（risk 元数据 + 重名即抛）+ 7 工具 + 单测
+- 实施决定：read/write/edit/bash **复用 pi-agent-core 内建工具**（经 NodeExecutionEnv
+  适配，围栏住进 env 的 absolutePath/canonicalPath——一处实现管住全部 SDK 工具）；
+  grep/find/ls 手写（~150 行）。对比全手写（~700 行）省一半，且 SDK 工具自带
+  截断/diff/二进制探测。spec 的"全部手写"按 goals §三"复用 SDK 优先"修正。
 
 ## Phase 5 Permission
 - [ ] classifier + rules + manager + 单测（硬拒绝不被 auto 覆盖）
