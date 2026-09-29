@@ -7,7 +7,6 @@
 
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 
 import { createModelRegistry } from "../model/registry.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -55,8 +54,7 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
   const dataRoot = options.dataRoot ?? dataRootFor(options.projectRoot, options.config);
   await mkdir(join(dataRoot, "sessions"), { recursive: true });
 
-  const sessionId = randomUUID();
-  const log = eventLogFor(dataRoot, sessionId);
+  let sessionId: string = "";
   const env = new NodeExecutionEnv(options.projectRoot);
 
   // 工具集：SDK 内建 4 件 + 搜索三件套 + load_skill。
@@ -75,6 +73,11 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
   const registry = createModelRegistry();
   if (options.config.model === "mock") registry.enableMock();
   const resolved = await registry.resolve(options.config.model === "mock" ? null : options.config.model);
+
+  // 会话：终态消息落盘；事件日志与会话共用同一个 id。
+  const session = new SessionManager(join(dataRoot, "sessions"));
+  sessionId = await session.start(options.projectRoot, resolved.name);
+  const log = eventLogFor(dataRoot, sessionId);
 
   // 上下文：截断 + 压缩（摘要走当前模型）。
   const contextOptions = options.config.context ?? {};
@@ -108,8 +111,6 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
     },
   });
 
-  // 会话：message_end 的终态消息落盘。
-  const session = new SessionManager(join(dataRoot, "sessions"));
 
   /** 在途日志写入。run() 返回前必须清空——调用方读到的日志才完整。 */
   const pending: Promise<unknown>[] = [];

@@ -1,0 +1,3 @@
+{"type":"session","id":"01a0ee23-3d96-707b-a46f-943c3f758a1f","cwd":"C:\\Users\\liwenjie\\.zcode\\workspace\\default\\KuseCode","model":"faux/faux-1","createdAt":"2026-09-29T17:08:02.070Z"}
+{"type":"message","message":{"role":"user","content":[{"type":"text","text":"定位"}],"timestamp":1790701682074}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"(mock) 收到：定位"}],"api":"faux:1790701682068:wer427pwn","provider":"faux","model":"faux-1","usage":{"input":1009,"output":3,"cacheRead":0,"cacheWrite":0,"totalTokens":1012,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":1790701682075}}

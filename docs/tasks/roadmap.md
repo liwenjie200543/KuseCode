@@ -67,11 +67,17 @@
 - [x] 单测 3 例（finished/unfinished 判定、cwd 匹配、continue 后 finished）
 - 实施决定：replay 直接由会话 JSONL 承担（resume 只读加载），不另设 replay 模块
 
-## Phase 11 TUI
-- [ ] tui/ 组合 + 斜杠命令 + pty 冒烟
+## Phase 11 ✅ TUI
+- [x] tui/index.ts：readline 交互会话——工具活动实时打印、confirm 询问
+  （a/A/d 内联回答）、/help /new /sessions /resume /exit、持久化失败不中断
+- 实施决定：v1 用 node 内置 readline 而非 pi-tui 组件系统——Editor 强制
+  完整主题对象，为这个 v1 引入整套主题实现不成比例（goals §三）。
+  "零 Agent 逻辑"与全部六项职责保持不变；pi-tui 依赖移除。
 
-## Phase 12 CLI
-- [ ] cli/：一次性模式（headless 默认拒绝 ASK）+ 交互模式 + 退出码
+## Phase 12 ✅ CLI
+- [x] cli/main.ts：交互（无参数）/一次性（-p）/continue/sessions 四种模式 +
+  --model/--repo/--data/--permission-mode；headless 默认拒绝 confirm；
+  事件与消息分离落盘（events/<id>.jsonl 与 sessions/<id>.jsonl）
 
 ## Phase 13 E2E Harness
 - [ ] mock provider 驱动真 Agent 修 fixture（bash→read→edit→bash→完成）

@@ -94,9 +94,9 @@ export class EventLog {
   }
 }
 
-/** 会话的事件日志文件路径：`<root>/sessions/<id>.jsonl`。 */
+/** 事件日志文件路径：`<root>/events/<id>.jsonl`（与会话消息文件分离）。 */
 export function eventLogFor(root: string, sessionId: string): EventLog {
-  return new EventLog(join(root, "sessions", `${sessionId}.jsonl`));
+  return new EventLog(join(root, "events", `${sessionId}.jsonl`));
 }
 
 export function ensureDirFor(file: string): string {
