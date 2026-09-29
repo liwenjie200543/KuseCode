@@ -48,8 +48,11 @@
 - [x] bootstrap 接线：发现项目级+用户级技能 → 提示词段 + 注册 safe 工具
 - [x] 单测 3 例 + CLI 冒烟（技能清单进系统提示词，token 计入）
 
-## Phase 8 MCP
-- [ ] mcp/index + fixture server + 单测
+## Phase 8 ✅ MCP
+- [x] 依赖 + `@modelcontextprotocol/sdk`；mcp/index.ts：并行连接（超时）→ listTools →
+  薄适配进 registry（JSON Schema 透传、撞名才加 `<server>_<tool>` 前缀）→ 状态记录 →
+  干净关闭；单点故障只记录不致命
+- [x] fixture：真 stdio echo server + 单测 3 例（连接调用/单点故障/命名规则）
 
 ## Phase 9 Sub-Agent
 - [ ] agents/manager + 4 工具 + 上限/只读单测

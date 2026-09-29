@@ -36,11 +36,14 @@ export class ToolRegistry {
     return [...this.entries.keys()];
   }
 
-  /** MCP/子代理批量合并用：重名 → `<namespace>_<name>`。 */
+  /** MCP/子代理批量合并用：撞名才加 `<namespace>_<name>` 前缀。 */
   registerMany(entries: readonly ToolEntry[], namespace?: string): void {
     for (const entry of entries) {
-      const name = namespace === undefined ? entry.tool.name : `${namespace}_${entry.tool.name}`;
-      this.register(namespace === undefined ? entry : { ...entry, tool: { ...entry.tool, name } });
+      if (namespace === undefined || !this.entries.has(entry.tool.name)) {
+        this.register(entry);
+        continue;
+      }
+      this.register({ ...entry, tool: { ...entry.tool, name: `${namespace}_${entry.tool.name}` } });
     }
   }
 }
