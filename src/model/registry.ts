@@ -25,6 +25,8 @@ export interface ResolvedModel {
 
 export interface ModelRegistry {
   readonly models: ReturnType<typeof createModels>;
+  /** 当前 mock 的剧本句柄（未启用 mock 时为 null）。 */
+  readonly mockHandle: FauxProviderHandle | null;
   /** 注册离线剧本 provider（测试与 `--model faux`）。 */
   enableMock(): FauxProviderHandle;
   /**
@@ -41,6 +43,10 @@ export function createModelRegistry(): ModelRegistry {
 
   return {
     models,
+
+    get mockHandle() {
+      return mock;
+    },
 
     enableMock() {
       mock = fauxProvider();

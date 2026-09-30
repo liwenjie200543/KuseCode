@@ -33,6 +33,8 @@ export interface HarnessOptions {
 export interface Harness {
   readonly sessionId: string;
   readonly log: EventLog;
+  /** mock 剧本句柄（--model mock 时注入剧本用；否则 null）。 */
+  readonly mockHandle: import("@earendil-works/pi-ai").FauxProviderHandle | null;
   /** 产品面注入询问回调（TUI 对话框）；headless 保持 null（confirm 默认拒绝）。 */
   setPermissionPrompt(
     prompt:
@@ -141,7 +143,10 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
       transformContext: context.makeTransformContext(),
       onEvent: (event) => {
         recordEvent(append, event);
-        if (event.type === "message_end") void session.record(event.message);
+        // 会话落盘同样纳入 pending：run() 返回即全部可见。
+        if (event.type === "message_end") {
+          pending.push(session.record(event.message).catch(() => {}));
+        }
       },
     },
   });
@@ -149,6 +154,7 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
   return {
     sessionId,
     log,
+    mockHandle: registry.mockHandle,
     setPermissionPrompt: (prompt) => permissions.setPrompt(prompt),
     run: async (text) => {
       append({ type: "run_started", goal: text });

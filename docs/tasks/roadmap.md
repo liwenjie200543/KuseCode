@@ -79,9 +79,11 @@
   --model/--repo/--data/--permission-mode；headless 默认拒绝 confirm；
   事件与消息分离落盘（events/<id>.jsonl 与 sessions/<id>.jsonl）
 
-## Phase 13 E2E Harness
-- [ ] mock provider 驱动真 Agent 修 fixture（bash→read→edit→bash→完成）
-- [ ] 断言：fixture 测试通过 + 会话文件完整 + 权限路径被走过
+## Phase 13 ✅ E2E Harness
+- [x] test/e2e-harness.test.ts：mock 剧本（bash→read→edit→bash）驱动真实
+  bootstrap+工具+日志，修复故意写坏的 calc.js
+- [x] 断言五条：fixture 修复、回答含 PASS、工具顺序正确、会话文件完整
+  （末行可解析）、recovery finished=true（带 FS 时序轮询）
 
 ## Phase 14 Final Simplification
 - [ ] 全库扫：unused export/dead code/duplicate；能删则删

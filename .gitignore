@@ -20,3 +20,7 @@ examples/*.output.txt
 .env
 .env.*
 !.env.example
+
+# 运行时产物（事件日志/会话）
+.kusecode/
+.kusecode-*/

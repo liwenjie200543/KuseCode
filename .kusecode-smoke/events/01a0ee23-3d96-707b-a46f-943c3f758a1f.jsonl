@@ -1,4 +1,0 @@
-{"seq":0,"ts":1790701682076,"type":"run_started","goal":"定位"}
-{"seq":1,"ts":1790701682078,"type":"message_end","role":"user","text":"定位"}
-{"seq":2,"ts":1790701682094,"type":"message_end","role":"assistant","usage":{"inputTokens":1009,"outputTokens":3,"costUsd":0},"stopReason":"stop","text":"(mock) 收到：定位"}
-{"seq":3,"ts":1790701682102,"type":"agent_end"}
