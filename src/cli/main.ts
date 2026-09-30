@@ -105,6 +105,9 @@ function parseArgs(argv: readonly string[], env: CliIo["env"]): CliArgs {
       case "continue":
         args.continueLast = true;
         break;
+      case "help":
+        args.help = true;
+        break;
       case "sessions":
         args.sessionsOnly = true;
         break;
