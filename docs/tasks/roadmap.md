@@ -85,9 +85,13 @@
 - [x] 断言五条：fixture 修复、回答含 PASS、工具顺序正确、会话文件完整
   （末行可解析）、recovery finished=true（带 FS 时序轮询）
 
-## Phase 14 Final Simplification
-- [ ] 全库扫：unused export/dead code/duplicate；能删则删
-- [ ] 实测 src 行数 ≤ 4,000 并写入 architecture.md
+## Phase 14 ✅ Final Simplification
+- [x] knip 扫描：删除 ensureDirFor 死代码、两个未使用类型导出；
+  发现并修复子代理工具不可达（接入 bootstrap，worker 只读子集）
+- [x] 实测 src = **2,918 行**（≤ 4,000 预算，对照重构前 9,633），
+  已写入 architecture.md；剩余 knip 报告为 bin 入口/fixture 误报
+- 剩余能力全部可达：tools（7+load_skill+4 sub-agent）/permissions/context/
+  session/skills/mcp/runtime（log+trace+recovery）
 
 ## Phase 15 README / Documentation
 - [ ] README 重写（新定位/快速上手/架构图）；旧 docs 归档

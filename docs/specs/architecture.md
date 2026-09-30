@@ -20,6 +20,11 @@
 | `test/` | 8,924 | **重写**（~2,500 行）。golden transcripts 钉住的是被退役的旧语义，随语义退休；测试重心转向 harness e2e（TinyCode 样板 + 离线 mock） |
 | 合计 src | 9,633 | 目标 **≤ 4,000** |
 
+**Phase 14 实测（2026-09-29）**：src 合计 **2,918 行**（23 个文件），远低于预算；
+knip 扫描清理了 ensureDirFor 死代码与两个未使用类型导出；子代理工具已接入
+bootstrap（knip 曾发现其不可达）。剩余 knip 报告的 3 个"未使用文件"均为
+bin 入口与按路径引用的 fixture（误报）。tests 由 8,924 → 按新验收观重建。|
+
 能力对照（目标=完整 harness）：Agent Loop ✅（SDK）· 7 Coding Tools ➕ · Permission ➕ ·
 Context 压缩 ➕ · Session ➕ · Skills ➕ · MCP ➕ · Sub-Agent ➕ · Runtime（日志/回放/恢复/trace）✅保留 ·
 TUI ➕ · CLI ✅重写 · Testing ➕重写。Desktop ➖删除。

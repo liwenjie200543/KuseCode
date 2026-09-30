@@ -13,9 +13,9 @@
 
 import { classifyCommand } from "./classifier.js";
 
-export type PromptOutcome = "once" | "always" | "deny";
+type PromptOutcome = "once" | "always" | "deny";
 
-export interface PermissionRequest {
+interface PermissionRequest {
   readonly toolName: string;
   /** 一行摘要（shell 命令或目标路径）。 */
   readonly title: string;

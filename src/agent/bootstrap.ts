@@ -15,6 +15,7 @@ import { NodeExecutionEnv } from "./env.js";
 import { PermissionManager } from "../permissions/manager.js";
 import { ContextManager } from "../context/manager.js";
 import { SessionManager } from "../session/manager.js";
+import { SubAgentManager, createSubAgentTools } from "../agents/manager.js";
 import { createLoadSkillTool, discoverSkills, skillsPromptSection } from "../skills/loader.js";
 import { eventLogFor, type EventLog } from "../runtime/log.js";
 import { buildSystemPrompt } from "./prompt.js";
@@ -64,7 +65,6 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
   for (const entry of createDefaultTools(env)) toolRegistry.register(entry);
   const skills = await discoverSkills(env, options.projectRoot);
   toolRegistry.register({ tool: createLoadSkillTool(skills), risk: "safe" });
-
   // 权限：risk 声明来自注册表，模式来自配置。
   const permissions = new PermissionManager({
     mode: options.config.permissionMode,
@@ -75,6 +75,20 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
   const registry = createModelRegistry();
   if (options.config.model === "mock") registry.enableMock();
   const resolved = await registry.resolve(options.config.model === "mock" ? null : options.config.model);
+
+  // 子代理：worker 只拿只读工具（从注册表挑选），复用同一模型与循环。
+  const subAgents = new SubAgentManager({
+    models: registry.models,
+    model: resolved.model,
+    projectRoot: options.projectRoot,
+    workerTools: ["read", "grep", "find", "ls"]
+      .map((name) => toolRegistry.get(name)?.tool)
+      .filter((tool) => tool !== undefined),
+  });
+  for (const tool of createSubAgentTools(subAgents)) {
+    toolRegistry.register({ tool, risk: "safe" });
+  }
+
 
   // 会话：终态消息落盘；事件日志与会话共用同一个 id。
   const session = new SessionManager(join(dataRoot, "sessions"));

@@ -99,6 +99,3 @@ export function eventLogFor(root: string, sessionId: string): EventLog {
   return new EventLog(join(root, "events", `${sessionId}.jsonl`));
 }
 
-export function ensureDirFor(file: string): string {
-  return dirname(file);
-}
