@@ -202,8 +202,8 @@ npm run build       # tsc -p tsconfig.build.json
 | [`docs/specs/architecture.md`](docs/specs/architecture.md) | 架构主文档：现状审计、目标架构、迁移映射、行数预算 |
 | [`docs/specs/*.md`](docs/specs)（10 篇） | 逐能力 Spec + Design + Task 合一：agent / tools / permissions / context / session / skills / mcp / sub-agents / tui |
 | [`docs/tasks/roadmap.md`](docs/tasks/roadmap.md) | 15 个 Phase 的进度账本（勾选即事实） |
-| [`docs/sdd/`](docs/sdd) | 上一轮 SDD 重构的完整记录（分析 / 规格 / 架构 / 实施计划 / 进度） |
-| `docs/02-*.md` ～ `docs/11-*.md` | 更早开发序列的逐步推理（历史归档） |
+| [`docs/archive/sdd/`](docs/archive/sdd) | 上一轮 SDD 重构的完整记录（分析 / 规格 / 架构 / 实施计划 / 进度） |
+| [`docs/archive/`](docs/archive) | 更早开发序列的逐步推理（历史归档） |
 
 ## 演进：从第一性原理到极简
 

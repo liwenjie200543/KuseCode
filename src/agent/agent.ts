@@ -67,14 +67,15 @@ export function createKuseAgent(options: KuseAgentOptions): KuseAgent {
     settle = resolve;
   });
 
-  const push = (event: AgentEvent): void => {
+  /** SDK 会 await 订阅者的返回值——onEvent 的落盘因此成为 run 结算的一部分。 */
+  const push = (event: AgentEvent): Promise<void> => {
     queue.push(event);
     if (event.type === "agent_end") {
       done = true;
       settle?.();
     }
     notify?.();
-    void hooks?.onEvent?.(event);
+    return Promise.resolve(hooks?.onEvent?.(event)) as Promise<void>;
   };
 
   const beforeToolCall = hooks?.beforeToolCall;

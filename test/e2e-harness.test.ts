@@ -84,7 +84,11 @@ describe("任务级 E2E（mock 模型 → 真工具 → 真日志）", () => {
     for (let attempt = 0; attempt < 20 && !finished; attempt += 1) {
       const infos = await listRecoveryInfo(join(dataDir, "sessions"));
       finished = infos[0]?.finished === true;
-      if (!finished) await new Promise((resolve) => setTimeout(resolve, 100));
+      if (!finished) {
+        const dbg = await listRecoveryInfo(join(dataDir, "sessions"));
+        console.error("DBG poll", attempt, JSON.stringify(dbg.map((i) => ({ f: i.finished, n: i.messageCount }))));
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
     }
     expect(finished).toBe(true);
   });

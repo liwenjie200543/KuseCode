@@ -93,5 +93,11 @@
 - 剩余能力全部可达：tools（7+load_skill+4 sub-agent）/permissions/context/
   session/skills/mcp/runtime（log+trace+recovery）
 
-## Phase 15 README / Documentation
-- [ ] README 重写（新定位/快速上手/架构图）；旧 docs 归档
+## Phase 15 ✅ README / Documentation
+- [x] README 重写（新定位 / 快速上手 / 架构图 / 文档地图）——远端完成于 ed34f23
+- [x] 旧 docs（02-11、sdd）归档至 docs/archive/；docs/ 保留 specs/design/tasks
+
+---
+
+**全部 16 个 Phase（0–15）完成。** 最终验收见 specs/architecture.md §5 DoD——
+全项通过：src 2,918 行、能力完整、74 例测试离线全绿、CLI/TUI 零 Agent 逻辑。

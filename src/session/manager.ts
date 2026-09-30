@@ -111,6 +111,8 @@ export class SessionStorage {
 
 export class SessionManager {
   private storage: SessionStorage;
+  /** 写入串行链：append-only 文件要求落盘顺序 = 事件顺序。 */
+  private chain: Promise<unknown> = Promise.resolve();
   private currentId: string | null = null;
   private meta: { cwd: string; model: string } | null = null;
 
@@ -146,14 +148,15 @@ export class SessionManager {
     return match?.id ?? null;
   }
 
-  /** 记录一条终态消息。持久化失败不致命（永不中断活会话）。 */
-  async record(message: AgentMessage): Promise<void> {
-    if (this.currentId === null || this.meta === null) return;
-    try {
-      await this.storage.appendMessage(this.currentId, message);
-    } catch {
-      // 持久化永不中断活会话
-    }
+  /** 记录一条终态消息。持久化失败不致命（永不中断活会话）。并发写入串行化。 */
+  record(message: AgentMessage): Promise<void> {
+    if (this.currentId === null || this.meta === null) return Promise.resolve();
+    this.chain = this.chain.then(() =>
+      this.storage.appendMessage(this.currentId as string, message).catch(() => {
+        // 持久化永不中断活会话
+      }),
+    );
+    return this.chain as Promise<void>;
   }
 
 
