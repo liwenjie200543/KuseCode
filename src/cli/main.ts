@@ -71,7 +71,7 @@ function parseArgs(argv: readonly string[], env: CliIo["env"]): CliArgs {
     permissionMode: null,
     help: false,
   };
-  const tokens = argv.slice(1);
+  const tokens = argv;
   const next = (index: number): string | null => tokens[index + 1] ?? null;
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
@@ -193,7 +193,7 @@ export async function main(argv: readonly string[], io: CliIo): Promise<number> 
 
 /** 进程入口：唯一的 process 触点。 */
 export async function runCli(): Promise<number> {
-  return main(process.argv, {
+  return main(process.argv.slice(2), {
     out: (text) => process.stdout.write(`${text}\n`),
     err: (text) => process.stderr.write(`${text}\n`),
     env: process.env,
