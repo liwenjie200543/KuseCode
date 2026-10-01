@@ -42,6 +42,8 @@ export interface KuseAgentOptions {
   readonly model: Model<string>;
   readonly systemPrompt: string;
   readonly tools: readonly import("@earendil-works/pi-agent-core").AgentTool<any>[];
+  /** 恢复会话时灌回的历史消息（SDD Phase 11 resume 支持）。 */
+  readonly initialMessages?: readonly AgentMessage[];
   readonly hooks?: AgentHooks;
 }
 
@@ -88,6 +90,7 @@ export function createKuseAgent(options: KuseAgentOptions): KuseAgent {
       model: options.model,
       thinkingLevel: "minimal",
       tools: [...options.tools],
+      ...(options.initialMessages === undefined ? {} : { messages: [...options.initialMessages] }),
     },
     ...(beforeToolCall === undefined
       ? {}

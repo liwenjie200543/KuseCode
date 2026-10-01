@@ -20,7 +20,7 @@ import { createLoadSkillTool, discoverSkills, skillsPromptSection } from "../ski
 import { eventLogFor, type EventLog } from "../runtime/log.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { createKuseAgent } from "./agent.js";
-import type { AgentEvent } from "@earendil-works/pi-agent-core";
+import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { KuseConfig } from "../config/schema.js";
 
 export interface HarnessOptions {
@@ -29,6 +29,8 @@ export interface HarnessOptions {
   readonly config: KuseConfig;
   /** 事件日志与会话文件的根目录。缺省 `<projectRoot>/.kusecode/runs`。 */
   readonly dataRoot?: string;
+  /** 恢复一个既有会话：绑定同一 id，并把历史消息灌回 transcript。 */
+  readonly resume?: { readonly id: string; readonly messages: readonly AgentMessage[] };
 }
 
 export interface Harness {
@@ -42,6 +44,8 @@ export interface Harness {
       | ((request: { toolName: string; title: string; reason: string }) => Promise<"once" | "always" | "deny">)
       | null,
   ): void;
+  /** 订阅 Agent 事件流（TUI/CLI 渲染用）。返回退订函数。 */
+  onEvent(callback: (event: AgentEvent) => void): () => void;
   /** 一次性任务：返回最终 assistant 文本；返回前日志已全部落盘。 */
   run(text: string): Promise<string>;
   abort(): void;
@@ -90,11 +94,6 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
   }
 
 
-  // 会话：终态消息落盘；事件日志与会话共用同一个 id。
-  const session = new SessionManager(join(dataRoot, "sessions"));
-  sessionId = await session.start(options.projectRoot, resolved.name);
-  const log = eventLogFor(dataRoot, sessionId);
-
   // 上下文：截断 + 压缩（摘要走当前模型）。
   const contextOptions = options.config.context ?? {};
   const context = new ContextManager({
@@ -128,6 +127,18 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
   });
 
 
+  // 恢复：绑定同一会话 id，历史灌回 transcript。
+  const session = new SessionManager(join(dataRoot, "sessions"));
+  if (options.resume !== undefined) {
+    sessionId = options.resume.id;
+    await session.resume(options.resume.id);
+  } else {
+    sessionId = await session.start(options.projectRoot, resolved.name);
+  }
+  const log = eventLogFor(dataRoot, sessionId);
+
+  const eventListeners = new Set<(event: AgentEvent) => void>();
+
   /** 在途日志写入。run() 返回前必须清空——调用方读到的日志才完整。 */
   const pending: Promise<unknown>[] = [];
   const append = (event: { type: string } & Record<string, unknown>): void => {
@@ -141,6 +152,7 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
   const agent = createKuseAgent({
     models: registry.models,
     model: resolved.model,
+    ...(options.resume === undefined ? {} : { initialMessages: options.resume.messages }),
     systemPrompt: [
       buildSystemPrompt(options.projectRoot, toolRegistry.names()),
       skillsPromptSection(skills),
@@ -170,6 +182,10 @@ export async function bootstrapHarness(options: HarnessOptions): Promise<Harness
     log,
     mockHandle: registry.mockHandle,
     setPermissionPrompt: (prompt) => permissions.setPrompt(prompt),
+    onEvent: (callback) => {
+      eventListeners.add(callback);
+      return () => eventListeners.delete(callback);
+    },
     run: async (text) => {
       append({ type: "run_started", goal: text });
       try {
